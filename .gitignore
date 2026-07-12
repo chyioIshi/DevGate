@@ -1,0 +1,15 @@
+/AGENTS.md
+
+.env
+.env.*
+!.env.example
+
+/devgate
+/.vscode/
+/.idea/
+.DS_Store
+
+/bin/
+*.test
+
+/coverage.out
