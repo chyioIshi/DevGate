@@ -12,6 +12,7 @@ const (
 	envReadHeaderTimeout = "DEVGATE_READ_HEADER_TIMEOUT"
 	envIdleTimeout       = "DEVGATE_IDLE_TIMEOUT"
 	envShutdownTimeout   = "DEVGATE_SHUTDOWN_TIMEOUT"
+	envUpstreamURL       = "DEVGATE_UPSTREAM_URL"
 )
 
 var configEnvKeys = []string{
@@ -19,10 +20,12 @@ var configEnvKeys = []string{
 	envReadHeaderTimeout,
 	envIdleTimeout,
 	envShutdownTimeout,
+	envUpstreamURL,
 }
 
-func TestLoadDefaults(t *testing.T) {
+func TestLoadDefaultsWithRequiredUpstream(t *testing.T) {
 	clearConfigEnv(t)
+	t.Setenv(envUpstreamURL, "http://localhost:8081")
 
 	got, err := Load()
 	if err != nil {
@@ -34,6 +37,7 @@ func TestLoadDefaults(t *testing.T) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
+		UpstreamURL:       "http://localhost:8081",
 	}
 
 	if got != want {
@@ -48,6 +52,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envReadHeaderTimeout, "2s")
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
+	t.Setenv(envUpstreamURL, "https://localhost:8081")
 
 	got, err := Load()
 	if err != nil {
@@ -59,6 +64,7 @@ func TestLoadOverrides(t *testing.T) {
 		ReadHeaderTimeout: 2 * time.Second,
 		IdleTimeout:       45 * time.Second,
 		ShutdownTimeout:   7 * time.Second,
+		UpstreamURL:       "https://localhost:8081",
 	}
 
 	if got != want {
@@ -69,7 +75,7 @@ func TestLoadOverrides(t *testing.T) {
 func TestLoadInvalidDuration(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv(envReadHeaderTimeout, "invalid")
-
+	t.Setenv(envUpstreamURL, "http://localhost:8081")
 	got, err := Load()
 	if err == nil {
 		t.Fatal("Load() error = nil, want parsing error")
@@ -115,6 +121,7 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			clearConfigEnv(t)
 			t.Setenv(test.envKey, test.envValue)
+			t.Setenv(envUpstreamURL, "http://localhost:8081")
 
 			got, err := Load()
 			if err == nil {
@@ -138,6 +145,7 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 func TestLoadEmptyHTTPAddressUsesDefault(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv(envHTTPAddr, "")
+	t.Setenv(envUpstreamURL, "http://localhost:8081")
 
 	got, err := Load()
 	if err != nil {
@@ -154,6 +162,7 @@ func TestConfigValidateRejectsEmptyHTTPAddress(t *testing.T) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
+		UpstreamURL:       "http://localhost:8081",
 	}
 
 	err := cfg.validate()
@@ -162,6 +171,60 @@ func TestConfigValidateRejectsEmptyHTTPAddress(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "http address must not be empty") {
 		t.Errorf("validate() error = %q, want empty address context", err)
+	}
+}
+
+func TestLoadRejectsInvalidUpstreamURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		envValue    string
+		wantMessage string
+	}{
+		{
+			"empty upstream URL",
+			"",
+			"upstream URL must not be empty",
+		},
+		{
+			"malformed upstream URL scheme",
+			"://broken.com",
+			"parse upstream URL",
+		},
+		{
+			"empty upstream URL host",
+			"http:///api",
+			"upstream URL host must not be empty",
+		},
+		{
+			"unsupported upstream URL scheme",
+			"ftp://ftp.com",
+			"upstream URL scheme must be http or https",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(envUpstreamURL, test.envValue)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatalf("Load() error = nil, want validation error")
+			}
+
+			if got != (Config{}) {
+				t.Errorf("Load() = %+v, want zero Config", got)
+			}
+
+			if !strings.Contains(err.Error(), "validate config") {
+				t.Errorf("Load() error = %q, want validation context", err)
+			}
+
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
+			}
+
+		})
 	}
 }
 
