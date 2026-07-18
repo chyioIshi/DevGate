@@ -10,13 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-)
 
-const (
-	serverAddr        = ":8080"
-	readHeaderTimeout = 5 * time.Second
-	idleTimeout       = 60 * time.Second
-	shutdownTimeout   = 10 * time.Second
+	"github.com/chyioishi/devgate/internal/config"
 )
 
 func main() {
@@ -30,19 +25,23 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
 	mux := newHTTPMux()
 
 	server := &http.Server{
-		Addr:              serverAddr,
+		Addr:              cfg.HTTPAddr,
 		Handler:           mux,
-		ReadHeaderTimeout: readHeaderTimeout,
-		IdleTimeout:       idleTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
-	return serve(ctx, server)
+	return serve(ctx, server, cfg.ShutdownTimeout)
 }
 
-func serve(ctx context.Context, server *http.Server) error {
+func serve(ctx context.Context, server *http.Server, shutdownTimeout time.Duration) error {
 	shutdownSignal, stop := signal.NotifyContext(
 		ctx,
 		os.Interrupt,
