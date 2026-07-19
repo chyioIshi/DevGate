@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/chyioishi/devgate/internal/config"
+	"github.com/chyioishi/devgate/internal/proxy"
 )
 
 func main() {
@@ -29,7 +31,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	mux := newHTTPMux()
+	upstreamURL, err := url.Parse(cfg.UpstreamURL)
+	if err != nil {
+		return fmt.Errorf("parse upstream URL: %w", err)
+	}
+	proxyHandler := proxy.New(upstreamURL)
+	mux := newHTTPMux(proxyHandler)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -96,9 +103,11 @@ func serve(ctx context.Context, server *http.Server, shutdownTimeout time.Durati
 	}
 }
 
-func newHTTPMux() *http.ServeMux {
+func newHTTPMux(proxyHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
+	mux.HandleFunc("/healthz", methodNotAllowedHandler)
+	mux.Handle("/", proxyHandler)
 
 	return mux
 }
@@ -107,4 +116,9 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok\n"))
+}
+
+func methodNotAllowedHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Allow", "GET, HEAD")
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 }
