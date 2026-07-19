@@ -118,3 +118,35 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 
 }
+
+func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	upstream.Close()
+
+	targetURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+
+	req, err := http.NewRequest(
+		http.MethodGet,
+		"http://test.com/users?id=1",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	recorder := httptest.NewRecorder()
+
+	proxy := New(targetURL)
+	proxy.ServeHTTP(recorder, req)
+
+	resp := recorder.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status code = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+	}
+}
