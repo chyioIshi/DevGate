@@ -190,6 +190,6 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 		t.Errorf("log path = %q, want %q", logRecord.Path, req.URL.Path)
 	}
 	if logRecord.Error == "" {
-		t.Errorf("log error is empty")
+		t.Error("log error is empty")
 	}
 }

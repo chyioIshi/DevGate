@@ -8,7 +8,7 @@ import (
 )
 
 func TestHealthHandler(t *testing.T) {
-	var mux = newHTTPMux(http.NotFoundHandler())
+	mux := newHTTPMux(http.NotFoundHandler())
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
 
@@ -33,7 +33,7 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
-	var mux = newHTTPMux(http.NotFoundHandler())
+	mux := newHTTPMux(http.NotFoundHandler())
 	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
 	w := httptest.NewRecorder()
 
