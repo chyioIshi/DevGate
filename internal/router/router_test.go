@@ -244,6 +244,152 @@ func TestNewCopiesRoutes(t *testing.T) {
 	}
 }
 
+func TestRouterMatch(t *testing.T) {
+	routes := []Route{
+		{
+			Name:        "fallback",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/",
+			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+		},
+		{
+			Name:        "admin",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api/admin",
+			UpstreamURL: mustParseURL(t, "http://admin-service:8080"),
+		},
+		{
+			Name:        "api",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api",
+			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+		},
+		{
+			Name:        "greeter",
+			Protocol:    ProtocolGRPC,
+			PathPrefix:  "/greeter.v1.Greeter",
+			UpstreamURL: mustParseURL(t, "http://greeter-service:9090"),
+		},
+	}
+
+	router, err := New(routes)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		path          string
+		wantRouteName string
+	}{
+		{
+			name:          "root path uses fallback",
+			path:          "/",
+			wantRouteName: "fallback",
+		},
+		{
+			name:          "exact API prefix",
+			path:          "/api",
+			wantRouteName: "api",
+		},
+		{
+			name:          "API prefix with trailing slash",
+			path:          "/api/",
+			wantRouteName: "api",
+		},
+		{
+			name:          "API child path",
+			path:          "/api/users",
+			wantRouteName: "api",
+		},
+		{
+			name:          "exact admin prefix uses longer match",
+			path:          "/api/admin",
+			wantRouteName: "admin",
+		},
+		{
+			name:          "admin child path uses longer match",
+			path:          "/api/admin/users",
+			wantRouteName: "admin",
+		},
+		{
+			name:          "similar segment does not match API",
+			path:          "/apix",
+			wantRouteName: "fallback",
+		},
+		{
+			name:          "gRPC method path",
+			path:          "/greeter.v1.Greeter/SayHello",
+			wantRouteName: "greeter",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, found := router.Match(test.path)
+			if !found {
+				t.Fatalf("Match(%q) found = false, want true", test.path)
+			}
+			if got.Name != test.wantRouteName {
+				t.Errorf(
+					"Match(%q) route name = %q, want %q",
+					test.path,
+					got.Name,
+					test.wantRouteName,
+				)
+			}
+		})
+	}
+}
+
+func TestRouterMatchNotFound(t *testing.T) {
+	router, err := New([]Route{
+		{
+			Name:        "api",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api",
+			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "unrelated path",
+			path: "/orders",
+		},
+		{
+			name: "similar segment",
+			path: "/apix",
+		},
+		{
+			name: "case-sensitive path",
+			path: "/API",
+		},
+		{
+			name: "relative path",
+			path: "api/users",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, found := router.Match(test.path)
+			if found {
+				t.Errorf("Match(%q) found = true, want false", test.path)
+			}
+			if got != (Route{}) {
+				t.Errorf("Match(%q) route = %+v, want zero Route", test.path, got)
+			}
+		})
+	}
+}
+
 func mustParseURL(t *testing.T, rawURL string) *url.URL {
 	t.Helper()
 
