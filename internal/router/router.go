@@ -50,3 +50,26 @@ func New(routes []Route) (*Router, error) {
 	routerRoutes := slices.Clone(routes)
 	return &Router{routes: routerRoutes}, nil
 }
+
+func (r *Router) Match(path string) (Route, bool) {
+	if !strings.HasPrefix(path, "/") {
+		return Route{}, false
+	}
+
+	bestMatch := Route{}
+	bestMatchLength := -1
+	for _, route := range r.routes {
+		matches := route.PathPrefix == "/" || path == route.PathPrefix || strings.HasPrefix(path, route.PathPrefix+"/")
+		if !matches {
+			continue
+		}
+		if len(route.PathPrefix) > bestMatchLength {
+			bestMatch = route
+			bestMatchLength = len(route.PathPrefix)
+		}
+	}
+	if bestMatchLength == -1 {
+		return Route{}, false
+	}
+	return bestMatch, true
+}
