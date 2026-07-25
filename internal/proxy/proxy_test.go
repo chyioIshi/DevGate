@@ -1,7 +1,10 @@
 package proxy
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +22,9 @@ type receivedRequest struct {
 }
 
 func TestReverseProxyForwardsRequest(t *testing.T) {
+	logger := slog.New(
+		slog.NewTextHandler(io.Discard, nil),
+	)
 	receivedCh := make(chan receivedRequest, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +53,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 	targetURL.Path = "/api"
 
-	gateway := httptest.NewServer(New(targetURL))
+	gateway := httptest.NewServer(New(targetURL, logger))
 	defer gateway.Close()
 
 	gatewayURL, err := url.Parse(gateway.URL)
@@ -120,6 +126,18 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 }
 
 func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
+	var logBuffer bytes.Buffer
+	var logRecord struct {
+		Level   string `json:"level"`
+		Message string `json:"msg"`
+		Method  string `json:"method"`
+		Path    string `json:"path"`
+		Error   string `json:"error"`
+	}
+	logger := slog.New(
+		slog.NewJSONHandler(&logBuffer, nil),
+	)
+
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -140,13 +158,38 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	proxy := New(targetURL)
+	proxy := New(targetURL, logger)
 	proxy.ServeHTTP(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("status code = %d, want %d", resp.StatusCode, http.StatusBadGateway)
+	}
+	if string(body) != "Bad Gateway\n" {
+		t.Errorf("body = %q, want %q", string(body), "Bad Gateway\n")
+	}
+	if err := json.NewDecoder(&logBuffer).Decode(&logRecord); err != nil {
+		t.Fatalf("decode json-log: %v", err)
+	}
+	if logRecord.Level != slog.LevelError.String() {
+		t.Errorf("log level = %q, want %q", logRecord.Level, slog.LevelError.String())
+	}
+	if logRecord.Message != "proxy request failed" {
+		t.Errorf("log msg = %q, want %q", logRecord.Message, "proxy request failed")
+	}
+	if logRecord.Method != http.MethodGet {
+		t.Errorf("log method = %q, want %q", logRecord.Method, http.MethodGet)
+	}
+	if logRecord.Path != req.URL.Path {
+		t.Errorf("log path = %q, want %q", logRecord.Path, req.URL.Path)
+	}
+	if logRecord.Error == "" {
+		t.Errorf("log error is empty")
 	}
 }

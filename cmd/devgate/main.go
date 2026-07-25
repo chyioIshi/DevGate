@@ -35,7 +35,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse upstream URL: %w", err)
 	}
-	proxyHandler := proxy.New(upstreamURL)
+	proxyHandler := proxy.New(upstreamURL, slog.Default())
 	mux := newHTTPMux(proxyHandler)
 
 	server := &http.Server{
