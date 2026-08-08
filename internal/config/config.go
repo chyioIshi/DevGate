@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -15,6 +16,7 @@ type Config struct {
 	IdleTimeout       time.Duration `env:"DEVGATE_IDLE_TIMEOUT"`
 	ShutdownTimeout   time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
 	UpstreamURL       string        `env:"DEVGATE_UPSTREAM_URL"`
+	ConfigFile        string        `env:"DEVGATE_CONFIG_FILE"`
 }
 
 func (c Config) validate() error {
@@ -43,6 +45,9 @@ func (c Config) validate() error {
 	if upstreamURL.Scheme != "http" && upstreamURL.Scheme != "https" {
 		return errors.New("upstream URL scheme must be http or https")
 	}
+	if strings.TrimSpace(c.ConfigFile) == "" {
+		return errors.New("config file path must not be empty")
+	}
 	return nil
 }
 
@@ -52,6 +57,7 @@ func Load() (Config, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
+		ConfigFile:        "devgate.yaml",
 	}
 
 	if err := env.Parse(&config); err != nil {
