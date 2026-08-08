@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/chyioishi/devgate/internal/config"
+	"github.com/chyioishi/devgate/internal/gateway"
 	"github.com/chyioishi/devgate/internal/proxy"
+	"github.com/chyioishi/devgate/internal/router"
 )
 
 func main() {
@@ -35,8 +37,23 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse upstream URL: %w", err)
 	}
+	defaultRoute := router.Route{
+		Name:        "default",
+		Protocol:    router.ProtocolHTTP,
+		PathPrefix:  "/",
+		UpstreamURL: upstreamURL,
+	}
+	routeRouter, err := router.New([]router.Route{defaultRoute})
+	if err != nil {
+		return fmt.Errorf("build routing table: %w", err)
+	}
 	proxyHandler := proxy.New(upstreamURL, slog.Default())
-	mux := newHTTPMux(proxyHandler)
+
+	routeHandlers := map[string]http.Handler{
+		defaultRoute.Name: proxyHandler,
+	}
+	gatewayHandler := gateway.New(routeRouter, routeHandlers)
+	mux := newHTTPMux(gatewayHandler)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -103,11 +120,11 @@ func serve(ctx context.Context, server *http.Server, shutdownTimeout time.Durati
 	}
 }
 
-func newHTTPMux(proxyHandler http.Handler) *http.ServeMux {
+func newHTTPMux(gatewayHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
 	mux.HandleFunc("/healthz", methodNotAllowedHandler)
-	mux.Handle("/", proxyHandler)
+	mux.Handle("/", gatewayHandler)
 
 	return mux
 }
