@@ -13,6 +13,7 @@ const (
 	envIdleTimeout       = "DEVGATE_IDLE_TIMEOUT"
 	envShutdownTimeout   = "DEVGATE_SHUTDOWN_TIMEOUT"
 	envUpstreamURL       = "DEVGATE_UPSTREAM_URL"
+	envConfigFile        = "DEVGATE_CONFIG_FILE"
 )
 
 var configEnvKeys = []string{
@@ -21,6 +22,7 @@ var configEnvKeys = []string{
 	envIdleTimeout,
 	envShutdownTimeout,
 	envUpstreamURL,
+	envConfigFile,
 }
 
 func TestLoadDefaultsWithRequiredUpstream(t *testing.T) {
@@ -38,6 +40,7 @@ func TestLoadDefaultsWithRequiredUpstream(t *testing.T) {
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
 		UpstreamURL:       "http://localhost:8081",
+		ConfigFile:        "devgate.yaml",
 	}
 
 	if got != want {
@@ -53,6 +56,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
 	t.Setenv(envUpstreamURL, "https://localhost:8081")
+	t.Setenv(envConfigFile, "/etc/devgate/devgate.yaml")
 
 	got, err := Load()
 	if err != nil {
@@ -65,10 +69,31 @@ func TestLoadOverrides(t *testing.T) {
 		IdleTimeout:       45 * time.Second,
 		ShutdownTimeout:   7 * time.Second,
 		UpstreamURL:       "https://localhost:8081",
+		ConfigFile:        "/etc/devgate/devgate.yaml",
 	}
 
 	if got != want {
 		t.Errorf("Load() = %+v, want %+v", got, want)
+	}
+}
+
+func TestLoadRejectsWhitespaceConfigFilePath(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv(envUpstreamURL, "http://localhost:8081")
+	t.Setenv(envConfigFile, " \t ")
+
+	got, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want validation error")
+	}
+	if got != (Config{}) {
+		t.Errorf("Load() = %+v, want zero Config", got)
+	}
+	if !strings.Contains(err.Error(), "validate config") {
+		t.Errorf("Load() error = %q, want validation context", err)
+	}
+	if !strings.Contains(err.Error(), "config file path must not be empty") {
+		t.Errorf("Load() error = %q, want empty config file context", err)
 	}
 }
 
