@@ -17,6 +17,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
 	UpstreamURL       string        `env:"DEVGATE_UPSTREAM_URL"`
 	ConfigFile        string        `env:"DEVGATE_CONFIG_FILE"`
+	Routes            []RouteConfig
 }
 
 func (c Config) validate() error {
@@ -66,6 +67,13 @@ func Load() (Config, error) {
 	if err := config.validate(); err != nil {
 		return Config{}, fmt.Errorf("validate config: %w", err)
 	}
+
+	routesConfig, err := loadConfigFile(config.ConfigFile)
+	if err != nil {
+		return Config{}, fmt.Errorf("load route configuration: %w", err)
+	}
+
+	config.Routes = routesConfig.Routes
 
 	return config, nil
 }
