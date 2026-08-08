@@ -1,11 +1,23 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
+
+const testRouteConfigYAML = `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+`
 
 const (
 	envHTTPAddr          = "DEVGATE_HTTP_ADDR"
@@ -27,7 +39,11 @@ var configEnvKeys = []string{
 
 func TestLoadDefaultsWithRequiredUpstream(t *testing.T) {
 	clearConfigEnv(t)
+	t.Chdir(t.TempDir())
 	t.Setenv(envUpstreamURL, "http://localhost:8081")
+	if err := os.WriteFile("devgate.yaml", []byte(testRouteConfigYAML), 0o600); err != nil {
+		t.Fatalf("write default config file: %v", err)
+	}
 
 	got, err := Load()
 	if err != nil {
@@ -41,11 +57,10 @@ func TestLoadDefaultsWithRequiredUpstream(t *testing.T) {
 		ShutdownTimeout:   10 * time.Second,
 		UpstreamURL:       "http://localhost:8081",
 		ConfigFile:        "devgate.yaml",
+		Routes:            testRouteConfigs(),
 	}
 
-	if got != want {
-		t.Errorf("Load() = %+v, want %+v", got, want)
-	}
+	assertConfigEqual(t, got, want)
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -56,7 +71,8 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
 	t.Setenv(envUpstreamURL, "https://localhost:8081")
-	t.Setenv(envConfigFile, "/etc/devgate/devgate.yaml")
+	configPath := writeConfigFile(t, testRouteConfigYAML)
+	t.Setenv(envConfigFile, configPath)
 
 	got, err := Load()
 	if err != nil {
@@ -69,12 +85,11 @@ func TestLoadOverrides(t *testing.T) {
 		IdleTimeout:       45 * time.Second,
 		ShutdownTimeout:   7 * time.Second,
 		UpstreamURL:       "https://localhost:8081",
-		ConfigFile:        "/etc/devgate/devgate.yaml",
+		ConfigFile:        configPath,
+		Routes:            testRouteConfigs(),
 	}
 
-	if got != want {
-		t.Errorf("Load() = %+v, want %+v", got, want)
-	}
+	assertConfigEqual(t, got, want)
 }
 
 func TestLoadRejectsWhitespaceConfigFilePath(t *testing.T) {
@@ -86,9 +101,7 @@ func TestLoadRejectsWhitespaceConfigFilePath(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() error = nil, want validation error")
 	}
-	if got != (Config{}) {
-		t.Errorf("Load() = %+v, want zero Config", got)
-	}
+	assertZeroConfig(t, got)
 	if !strings.Contains(err.Error(), "validate config") {
 		t.Errorf("Load() error = %q, want validation context", err)
 	}
@@ -106,9 +119,7 @@ func TestLoadInvalidDuration(t *testing.T) {
 		t.Fatal("Load() error = nil, want parsing error")
 	}
 
-	if got != (Config{}) {
-		t.Errorf("Load() = %+v, want zero Config", got)
-	}
+	assertZeroConfig(t, got)
 
 	if !strings.Contains(err.Error(), "parse environment") {
 		t.Errorf("Load() error = %q, want parsing context", err)
@@ -153,9 +164,7 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 				t.Fatal("Load() error = nil, want validation error")
 			}
 
-			if got != (Config{}) {
-				t.Errorf("Load() = %+v, want zero Config", got)
-			}
+			assertZeroConfig(t, got)
 
 			if !strings.Contains(err.Error(), "validate config") {
 				t.Errorf("Load() error = %q, want validation context", err)
@@ -171,6 +180,7 @@ func TestLoadEmptyHTTPAddressUsesDefault(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv(envHTTPAddr, "")
 	t.Setenv(envUpstreamURL, "http://localhost:8081")
+	t.Setenv(envConfigFile, writeConfigFile(t, testRouteConfigYAML))
 
 	got, err := Load()
 	if err != nil {
@@ -237,9 +247,7 @@ func TestLoadRejectsInvalidUpstreamURL(t *testing.T) {
 				t.Fatalf("Load() error = nil, want validation error")
 			}
 
-			if got != (Config{}) {
-				t.Errorf("Load() = %+v, want zero Config", got)
-			}
+			assertZeroConfig(t, got)
 
 			if !strings.Contains(err.Error(), "validate config") {
 				t.Errorf("Load() error = %q, want validation context", err)
@@ -250,6 +258,61 @@ func TestLoadRejectsInvalidUpstreamURL(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestLoadReturnsRouteConfigurationError(t *testing.T) {
+	clearConfigEnv(t)
+	configPath := filepath.Join(t.TempDir(), "missing.yaml")
+	t.Setenv(envUpstreamURL, "http://localhost:8081")
+	t.Setenv(envConfigFile, configPath)
+
+	got, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want route configuration error")
+	}
+	assertZeroConfig(t, got)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Load() error = %v, want fs.ErrNotExist", err)
+	}
+	if !strings.Contains(err.Error(), "load route configuration") {
+		t.Errorf("Load() error = %q, want route configuration context", err)
+	}
+	if !strings.Contains(err.Error(), configPath) {
+		t.Errorf("Load() error = %q, want path %q", err, configPath)
+	}
+}
+
+func assertConfigEqual(t *testing.T, got, want Config) {
+	t.Helper()
+
+	if got.HTTPAddr != want.HTTPAddr ||
+		got.ReadHeaderTimeout != want.ReadHeaderTimeout ||
+		got.IdleTimeout != want.IdleTimeout ||
+		got.ShutdownTimeout != want.ShutdownTimeout ||
+		got.UpstreamURL != want.UpstreamURL ||
+		got.ConfigFile != want.ConfigFile {
+		t.Errorf("Config scalar fields = %+v, want %+v", got, want)
+	}
+	if !slices.Equal(got.Routes, want.Routes) {
+		t.Errorf("Config.Routes = %+v, want %+v", got.Routes, want.Routes)
+	}
+}
+
+func assertZeroConfig(t *testing.T, got Config) {
+	t.Helper()
+
+	assertConfigEqual(t, got, Config{})
+}
+
+func testRouteConfigs() []RouteConfig {
+	return []RouteConfig{
+		{
+			Name:        "users",
+			Protocol:    "http",
+			PathPrefix:  "/api/users",
+			UpstreamURL: "http://users-service:8080",
+		},
 	}
 }
 
