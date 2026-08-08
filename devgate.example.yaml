@@ -1,0 +1,10 @@
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+
+  - name: fallback
+    protocol: http
+    path_prefix: /
+    upstream_url: http://frontend-service:8080
