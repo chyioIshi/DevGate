@@ -3,7 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -14,7 +14,8 @@ type Config struct {
 	ReadHeaderTimeout time.Duration `env:"DEVGATE_READ_HEADER_TIMEOUT"`
 	IdleTimeout       time.Duration `env:"DEVGATE_IDLE_TIMEOUT"`
 	ShutdownTimeout   time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
-	UpstreamURL       string        `env:"DEVGATE_UPSTREAM_URL"`
+	ConfigFile        string        `env:"DEVGATE_CONFIG_FILE"`
+	Routes            []RouteConfig
 }
 
 func (c Config) validate() error {
@@ -30,18 +31,8 @@ func (c Config) validate() error {
 	if c.ShutdownTimeout <= 0 {
 		return errors.New("shutdown timeout must be positive")
 	}
-	if c.UpstreamURL == "" {
-		return errors.New("upstream URL must not be empty")
-	}
-	upstreamURL, err := url.Parse(c.UpstreamURL)
-	if err != nil {
-		return fmt.Errorf("parse upstream URL: %w", err)
-	}
-	if upstreamURL.Host == "" {
-		return errors.New("upstream URL host must not be empty")
-	}
-	if upstreamURL.Scheme != "http" && upstreamURL.Scheme != "https" {
-		return errors.New("upstream URL scheme must be http or https")
+	if strings.TrimSpace(c.ConfigFile) == "" {
+		return errors.New("config file path must not be empty")
 	}
 	return nil
 }
@@ -52,6 +43,7 @@ func Load() (Config, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
+		ConfigFile:        "devgate.yaml",
 	}
 
 	if err := env.Parse(&config); err != nil {
@@ -60,6 +52,13 @@ func Load() (Config, error) {
 	if err := config.validate(); err != nil {
 		return Config{}, fmt.Errorf("validate config: %w", err)
 	}
+
+	routesConfig, err := loadConfigFile(config.ConfigFile)
+	if err != nil {
+		return Config{}, fmt.Errorf("load route configuration: %w", err)
+	}
+
+	config.Routes = routesConfig.Routes
 
 	return config, nil
 }

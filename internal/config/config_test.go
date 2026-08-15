@@ -1,18 +1,30 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 )
+
+const testRouteConfigYAML = `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+`
 
 const (
 	envHTTPAddr          = "DEVGATE_HTTP_ADDR"
 	envReadHeaderTimeout = "DEVGATE_READ_HEADER_TIMEOUT"
 	envIdleTimeout       = "DEVGATE_IDLE_TIMEOUT"
 	envShutdownTimeout   = "DEVGATE_SHUTDOWN_TIMEOUT"
-	envUpstreamURL       = "DEVGATE_UPSTREAM_URL"
+	envConfigFile        = "DEVGATE_CONFIG_FILE"
 )
 
 var configEnvKeys = []string{
@@ -20,12 +32,15 @@ var configEnvKeys = []string{
 	envReadHeaderTimeout,
 	envIdleTimeout,
 	envShutdownTimeout,
-	envUpstreamURL,
+	envConfigFile,
 }
 
-func TestLoadDefaultsWithRequiredUpstream(t *testing.T) {
+func TestLoadDefaults(t *testing.T) {
 	clearConfigEnv(t)
-	t.Setenv(envUpstreamURL, "http://localhost:8081")
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("devgate.yaml", []byte(testRouteConfigYAML), 0o600); err != nil {
+		t.Fatalf("write default config file: %v", err)
+	}
 
 	got, err := Load()
 	if err != nil {
@@ -37,12 +52,11 @@ func TestLoadDefaultsWithRequiredUpstream(t *testing.T) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
-		UpstreamURL:       "http://localhost:8081",
+		ConfigFile:        "devgate.yaml",
+		Routes:            testRouteConfigs(),
 	}
 
-	if got != want {
-		t.Errorf("Load() = %+v, want %+v", got, want)
-	}
+	assertConfigEqual(t, got, want)
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -52,7 +66,8 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envReadHeaderTimeout, "2s")
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
-	t.Setenv(envUpstreamURL, "https://localhost:8081")
+	configPath := writeConfigFile(t, testRouteConfigYAML)
+	t.Setenv(envConfigFile, configPath)
 
 	got, err := Load()
 	if err != nil {
@@ -64,26 +79,39 @@ func TestLoadOverrides(t *testing.T) {
 		ReadHeaderTimeout: 2 * time.Second,
 		IdleTimeout:       45 * time.Second,
 		ShutdownTimeout:   7 * time.Second,
-		UpstreamURL:       "https://localhost:8081",
+		ConfigFile:        configPath,
+		Routes:            testRouteConfigs(),
 	}
 
-	if got != want {
-		t.Errorf("Load() = %+v, want %+v", got, want)
+	assertConfigEqual(t, got, want)
+}
+
+func TestLoadRejectsWhitespaceConfigFilePath(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv(envConfigFile, " \t ")
+
+	got, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want validation error")
+	}
+	assertZeroConfig(t, got)
+	if !strings.Contains(err.Error(), "validate config") {
+		t.Errorf("Load() error = %q, want validation context", err)
+	}
+	if !strings.Contains(err.Error(), "config file path must not be empty") {
+		t.Errorf("Load() error = %q, want empty config file context", err)
 	}
 }
 
 func TestLoadInvalidDuration(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv(envReadHeaderTimeout, "invalid")
-	t.Setenv(envUpstreamURL, "http://localhost:8081")
 	got, err := Load()
 	if err == nil {
 		t.Fatal("Load() error = nil, want parsing error")
 	}
 
-	if got != (Config{}) {
-		t.Errorf("Load() = %+v, want zero Config", got)
-	}
+	assertZeroConfig(t, got)
 
 	if !strings.Contains(err.Error(), "parse environment") {
 		t.Errorf("Load() error = %q, want parsing context", err)
@@ -121,16 +149,13 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			clearConfigEnv(t)
 			t.Setenv(test.envKey, test.envValue)
-			t.Setenv(envUpstreamURL, "http://localhost:8081")
 
 			got, err := Load()
 			if err == nil {
 				t.Fatal("Load() error = nil, want validation error")
 			}
 
-			if got != (Config{}) {
-				t.Errorf("Load() = %+v, want zero Config", got)
-			}
+			assertZeroConfig(t, got)
 
 			if !strings.Contains(err.Error(), "validate config") {
 				t.Errorf("Load() error = %q, want validation context", err)
@@ -145,7 +170,7 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 func TestLoadEmptyHTTPAddressUsesDefault(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv(envHTTPAddr, "")
-	t.Setenv(envUpstreamURL, "http://localhost:8081")
+	t.Setenv(envConfigFile, writeConfigFile(t, testRouteConfigYAML))
 
 	got, err := Load()
 	if err != nil {
@@ -162,7 +187,7 @@ func TestConfigValidateRejectsEmptyHTTPAddress(t *testing.T) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
-		UpstreamURL:       "http://localhost:8081",
+		ConfigFile:        "devgate.yaml",
 	}
 
 	err := cfg.validate()
@@ -174,57 +199,56 @@ func TestConfigValidateRejectsEmptyHTTPAddress(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidUpstreamURL(t *testing.T) {
-	tests := []struct {
-		name        string
-		envValue    string
-		wantMessage string
-	}{
-		{
-			"empty upstream URL",
-			"",
-			"upstream URL must not be empty",
-		},
-		{
-			"malformed upstream URL scheme",
-			"://broken.com",
-			"parse upstream URL",
-		},
-		{
-			"empty upstream URL host",
-			"http:///api",
-			"upstream URL host must not be empty",
-		},
-		{
-			"unsupported upstream URL scheme",
-			"ftp://ftp.com",
-			"upstream URL scheme must be http or https",
-		},
+func TestLoadReturnsRouteConfigurationError(t *testing.T) {
+	clearConfigEnv(t)
+	configPath := filepath.Join(t.TempDir(), "missing.yaml")
+	t.Setenv(envConfigFile, configPath)
+
+	got, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want route configuration error")
 	}
+	assertZeroConfig(t, got)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Load() error = %v, want fs.ErrNotExist", err)
+	}
+	if !strings.Contains(err.Error(), "load route configuration") {
+		t.Errorf("Load() error = %q, want route configuration context", err)
+	}
+	if !strings.Contains(err.Error(), configPath) {
+		t.Errorf("Load() error = %q, want path %q", err, configPath)
+	}
+}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			clearConfigEnv(t)
-			t.Setenv(envUpstreamURL, test.envValue)
+func assertConfigEqual(t *testing.T, got, want Config) {
+	t.Helper()
 
-			got, err := Load()
-			if err == nil {
-				t.Fatalf("Load() error = nil, want validation error")
-			}
+	if got.HTTPAddr != want.HTTPAddr ||
+		got.ReadHeaderTimeout != want.ReadHeaderTimeout ||
+		got.IdleTimeout != want.IdleTimeout ||
+		got.ShutdownTimeout != want.ShutdownTimeout ||
+		got.ConfigFile != want.ConfigFile {
+		t.Errorf("Config scalar fields = %+v, want %+v", got, want)
+	}
+	if !slices.Equal(got.Routes, want.Routes) {
+		t.Errorf("Config.Routes = %+v, want %+v", got.Routes, want.Routes)
+	}
+}
 
-			if got != (Config{}) {
-				t.Errorf("Load() = %+v, want zero Config", got)
-			}
+func assertZeroConfig(t *testing.T, got Config) {
+	t.Helper()
 
-			if !strings.Contains(err.Error(), "validate config") {
-				t.Errorf("Load() error = %q, want validation context", err)
-			}
+	assertConfigEqual(t, got, Config{})
+}
 
-			if !strings.Contains(err.Error(), test.wantMessage) {
-				t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
-			}
-
-		})
+func testRouteConfigs() []RouteConfig {
+	return []RouteConfig{
+		{
+			Name:        "users",
+			Protocol:    "http",
+			PathPrefix:  "/api/users",
+			UpstreamURL: "http://users-service:8080",
+		},
 	}
 }
 
