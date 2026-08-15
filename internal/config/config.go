@@ -16,6 +16,8 @@ type Config struct {
 	ShutdownTimeout   time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
 	ConfigFile        string        `env:"DEVGATE_CONFIG_FILE"`
 	Routes            []RouteConfig
+	LogFormat         string `env:"DEVGATE_LOG_FORMAT"`
+	LogLevel          string `env:"DEVGATE_LOG_LEVEL"`
 }
 
 func (c Config) validate() error {
@@ -34,6 +36,16 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.ConfigFile) == "" {
 		return errors.New("config file path must not be empty")
 	}
+	switch c.LogFormat {
+	case "json", "text":
+	default:
+		return fmt.Errorf("invalid log format: %q, must be 'json' or 'text'", c.LogFormat)
+	}
+	switch c.LogLevel {
+	case "info", "warn", "error", "debug":
+	default:
+		return fmt.Errorf("invalid log level: %q, must be 'info', 'warn', 'error', 'debug'", c.LogLevel)
+	}
 	return nil
 }
 
@@ -44,6 +56,8 @@ func Load() (Config, error) {
 		IdleTimeout:       60 * time.Second,
 		ShutdownTimeout:   10 * time.Second,
 		ConfigFile:        "devgate.yaml",
+		LogFormat:         "text",
+		LogLevel:          "info",
 	}
 
 	if err := env.Parse(&config); err != nil {
