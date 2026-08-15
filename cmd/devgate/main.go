@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/gateway"
-	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/router"
 )
 
@@ -33,25 +31,20 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	upstreamURL, err := url.Parse(cfg.UpstreamURL)
+
+	routes, err := routesFromConfig(cfg.Routes)
 	if err != nil {
-		return fmt.Errorf("parse upstream URL: %w", err)
+		return fmt.Errorf("load routes from config: %w", err)
 	}
-	defaultRoute := router.Route{
-		Name:        "default",
-		Protocol:    router.ProtocolHTTP,
-		PathPrefix:  "/",
-		UpstreamURL: upstreamURL,
-	}
-	routeRouter, err := router.New([]router.Route{defaultRoute})
+	routeRouter, err := router.New(routes)
 	if err != nil {
 		return fmt.Errorf("build routing table: %w", err)
 	}
-	proxyHandler := proxy.New(upstreamURL, slog.Default())
-
-	routeHandlers := map[string]http.Handler{
-		defaultRoute.Name: proxyHandler,
+	routeHandlers, err := handlersFromRoutes(routes, slog.Default())
+	if err != nil {
+		return fmt.Errorf("create route handlers: %w", err)
 	}
+
 	gatewayHandler := gateway.New(routeRouter, routeHandlers)
 	mux := newHTTPMux(gatewayHandler)
 

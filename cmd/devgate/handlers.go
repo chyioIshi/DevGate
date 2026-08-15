@@ -20,7 +20,7 @@ func handlersFromRoutes(routes []router.Route, logger *slog.Logger) (map[string]
 			return nil, fmt.Errorf(
 				"create handler for route %q: gRPC protocol is not supported yet",
 				route.Name,
-		)
+			)
 		default:
 			return nil, fmt.Errorf(
 				"create handler for route %q: unsupported protocol %q",
