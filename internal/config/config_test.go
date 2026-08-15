@@ -25,6 +25,8 @@ const (
 	envIdleTimeout       = "DEVGATE_IDLE_TIMEOUT"
 	envShutdownTimeout   = "DEVGATE_SHUTDOWN_TIMEOUT"
 	envConfigFile        = "DEVGATE_CONFIG_FILE"
+	envLogFormat         = "DEVGATE_LOG_FORMAT"
+	envLogLevel          = "DEVGATE_LOG_LEVEL"
 )
 
 var configEnvKeys = []string{
@@ -33,6 +35,8 @@ var configEnvKeys = []string{
 	envIdleTimeout,
 	envShutdownTimeout,
 	envConfigFile,
+	envLogFormat,
+	envLogLevel,
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -54,6 +58,8 @@ func TestLoadDefaults(t *testing.T) {
 		ShutdownTimeout:   10 * time.Second,
 		ConfigFile:        "devgate.yaml",
 		Routes:            testRouteConfigs(),
+		LogFormat:         "text",
+		LogLevel:          "info",
 	}
 
 	assertConfigEqual(t, got, want)
@@ -66,6 +72,8 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envReadHeaderTimeout, "2s")
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
+	t.Setenv(envLogFormat, "json")
+	t.Setenv(envLogLevel, "debug")
 	configPath := writeConfigFile(t, testRouteConfigYAML)
 	t.Setenv(envConfigFile, configPath)
 
@@ -81,9 +89,54 @@ func TestLoadOverrides(t *testing.T) {
 		ShutdownTimeout:   7 * time.Second,
 		ConfigFile:        configPath,
 		Routes:            testRouteConfigs(),
+		LogFormat:         "json",
+		LogLevel:          "debug",
 	}
 
 	assertConfigEqual(t, got, want)
+}
+
+func TestLoadRejectsInvalidLogConfiguration(t *testing.T) {
+	tests := []struct {
+		name        string
+		envKey      string
+		envValue    string
+		wantMessage string
+	}{
+		{
+			name:        "invalid format",
+			envKey:      envLogFormat,
+			envValue:    "xml",
+			wantMessage: `invalid log format: "xml"`,
+		},
+		{
+			name:        "invalid level",
+			envKey:      envLogLevel,
+			envValue:    "verbose",
+			wantMessage: `invalid log level: "verbose"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(test.envKey, test.envValue)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want validation error")
+			}
+
+			assertZeroConfig(t, got)
+
+			if !strings.Contains(err.Error(), "validate config") {
+				t.Errorf("Load() error = %q, want validation context", err)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
+			}
+		})
+	}
 }
 
 func TestLoadRejectsWhitespaceConfigFilePath(t *testing.T) {
@@ -227,7 +280,9 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.ReadHeaderTimeout != want.ReadHeaderTimeout ||
 		got.IdleTimeout != want.IdleTimeout ||
 		got.ShutdownTimeout != want.ShutdownTimeout ||
-		got.ConfigFile != want.ConfigFile {
+		got.ConfigFile != want.ConfigFile ||
+		got.LogFormat != want.LogFormat ||
+		got.LogLevel != want.LogLevel {
 		t.Errorf("Config scalar fields = %+v, want %+v", got, want)
 	}
 	if !slices.Equal(got.Routes, want.Routes) {
