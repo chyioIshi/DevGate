@@ -40,12 +40,13 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build routing table: %w", err)
 	}
-	routeHandlers, err := handlersFromRoutes(routes, slog.Default())
+	logger := slog.Default()
+	routeHandlers, err := handlersFromRoutes(routes, logger)
 	if err != nil {
 		return fmt.Errorf("create route handlers: %w", err)
 	}
 
-	gatewayHandler := gateway.New(routeRouter, routeHandlers)
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger)
 	mux := newHTTPMux(gatewayHandler)
 
 	server := &http.Server{

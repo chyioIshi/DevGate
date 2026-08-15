@@ -55,7 +55,7 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	gatewayHandler := gateway.New(routeRouter, routeHandlers)
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger())
 
 	tests := []struct {
 		name       string
