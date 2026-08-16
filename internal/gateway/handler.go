@@ -36,7 +36,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"route", routeName,
 			"status", rw.statusCode,
 			"bytes", rw.bytesWritten,
-			"duration", time.Since(startedAt),
+			"duration_ms", time.Since(startedAt).Seconds()*1000,
 		)
 	}()
 
