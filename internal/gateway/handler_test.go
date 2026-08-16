@@ -167,13 +167,14 @@ func TestNewCopiesRouteHandlers(t *testing.T) {
 }
 
 type accessLogRecord struct {
-	Message  string          `json:"msg"`
-	Method   string          `json:"method"`
-	Path     string          `json:"path"`
-	Route    string          `json:"route"`
-	Status   int             `json:"status"`
-	Bytes    int64           `json:"bytes"`
-	Duration json.RawMessage `json:"duration"`
+	Message        string          `json:"msg"`
+	Method         string          `json:"method"`
+	Path           string          `json:"path"`
+	Route          string          `json:"route"`
+	Status         int             `json:"status"`
+	Bytes          int64           `json:"bytes"`
+	DurationMS     *float64        `json:"duration_ms"`
+	LegacyDuration json.RawMessage `json:"duration"`
 }
 
 func newTestLogger() (*slog.Logger, *bytes.Buffer) {
@@ -213,8 +214,13 @@ func assertAccessLog(t *testing.T, output *bytes.Buffer, want accessLogRecord) {
 	if got.Bytes != want.Bytes {
 		t.Errorf("access log bytes = %d, want %d", got.Bytes, want.Bytes)
 	}
-	if len(got.Duration) == 0 || string(got.Duration) == "null" {
-		t.Error("access log duration is missing")
+	if got.DurationMS == nil {
+		t.Error("access log duration_ms is missing")
+	} else if *got.DurationMS < 0 {
+		t.Errorf("access log duration_ms = %f, want non-negative value", *got.DurationMS)
+	}
+	if len(got.LegacyDuration) != 0 {
+		t.Errorf("legacy access log duration = %s, want field to be absent", got.LegacyDuration)
 	}
 }
 
