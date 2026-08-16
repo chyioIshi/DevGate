@@ -18,20 +18,25 @@ import (
 
 func main() {
 	ctx := context.Background()
-	if err := run(ctx); err != nil {
-		slog.Error("server stopped with an error", "error", err)
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+	logger, err := newLogger(os.Stdout, cfg.LogFormat, cfg.LogLevel)
+	if err != nil {
+		slog.Error("failed to create logger", "error", err)
+		os.Exit(1)
+	}
+	if err := run(ctx, cfg, logger); err != nil {
+		logger.Error("server stopped with an error", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("server stopped")
+	logger.Info("server stopped")
 }
 
-func run(ctx context.Context) error {
-	cfg, err := config.Load()
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	routes, err := routesFromConfig(cfg.Routes)
 	if err != nil {
 		return fmt.Errorf("load routes from config: %w", err)
@@ -40,7 +45,6 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("build routing table: %w", err)
 	}
-	logger := slog.Default()
 	routeHandlers, err := handlersFromRoutes(routes, logger)
 	if err != nil {
 		return fmt.Errorf("create route handlers: %w", err)
@@ -56,10 +60,10 @@ func run(ctx context.Context) error {
 		IdleTimeout:       cfg.IdleTimeout,
 	}
 
-	return serve(ctx, server, cfg.ShutdownTimeout)
+	return serve(ctx, server, logger, cfg.ShutdownTimeout)
 }
 
-func serve(ctx context.Context, server *http.Server, shutdownTimeout time.Duration) error {
+func serve(ctx context.Context, server *http.Server, logger *slog.Logger, shutdownTimeout time.Duration) error {
 	shutdownSignal, stop := signal.NotifyContext(
 		ctx,
 		os.Interrupt,
@@ -69,7 +73,7 @@ func serve(ctx context.Context, server *http.Server, shutdownTimeout time.Durati
 
 	serveErrCh := make(chan error, 1)
 
-	slog.Info("starting server", "addr", server.Addr)
+	logger.Info("starting server", "addr", server.Addr)
 	go func() {
 		serveErrCh <- server.ListenAndServe()
 	}()
@@ -84,7 +88,7 @@ func serve(ctx context.Context, server *http.Server, shutdownTimeout time.Durati
 
 	case <-shutdownSignal.Done():
 		stop()
-		slog.Info("shutdown requested")
+		logger.Info("shutdown requested")
 
 		shutdownCtx, cancel := context.WithTimeout(
 			context.Background(),
