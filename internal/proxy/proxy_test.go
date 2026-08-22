@@ -21,9 +21,12 @@ type receivedRequest struct {
 	XForwardedFor   string
 	XForwardedHost  string
 	XForwardedProto string
+	RequestID       string
 }
 
 func TestReverseProxyForwardsRequest(t *testing.T) {
+	const upstreamRequestID = "upstream-controlled-value"
+
 	logger := slog.New(
 		slog.NewTextHandler(io.Discard, nil),
 	)
@@ -37,9 +40,11 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 				XForwardedFor:   r.Header.Get("X-Forwarded-For"),
 				XForwardedHost:  r.Header.Get("X-Forwarded-Host"),
 				XForwardedProto: r.Header.Get("X-Forwarded-Proto"),
+				RequestID:       r.Header.Get(requestid.HeaderName),
 			}
 
 			w.Header().Set("X-Upstream", "true")
+			w.Header().Set(requestid.HeaderName, upstreamRequestID)
 			w.WriteHeader(http.StatusCreated)
 
 			if _, err := io.WriteString(w, "proxied"); err != nil {
@@ -55,7 +60,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 	targetURL.Path = "/api"
 
-	gateway := httptest.NewServer(New(targetURL, logger))
+	gateway := httptest.NewServer(requestid.Middleware(New(targetURL, logger), logger))
 	defer gateway.Close()
 
 	gatewayURL, err := url.Parse(gateway.URL)
@@ -75,6 +80,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "123.123.123.123")
 	req.Header.Set("X-Forwarded-Host", "attacker.example")
 	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set(requestid.HeaderName, "spoofed-client-value")
 
 	resp, err := gateway.Client().Do(req)
 	if err != nil {
@@ -124,7 +130,27 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	if got := resp.Header.Get("X-Upstream"); got != "true" {
 		t.Errorf("response header X-Upstream = %q, want %q", got, "true")
 	}
-
+	responseRequestIDs := resp.Header.Values(requestid.HeaderName)
+	if len(responseRequestIDs) != 1 {
+		t.Fatalf("response request IDs = %q, want exactly one value", responseRequestIDs)
+	}
+	responseRequestID := responseRequestIDs[0]
+	if responseRequestID == "" {
+		t.Fatal("response request ID is empty")
+	}
+	if responseRequestID == upstreamRequestID {
+		t.Error("upstream replaced gateway-generated response request ID")
+	}
+	if responseRequestID == "spoofed-client-value" {
+		t.Error("gateway preserved spoofed client request ID")
+	}
+	if got.RequestID != responseRequestID {
+		t.Errorf(
+			"upstream request ID = %q, want response request ID %q",
+			got.RequestID,
+			responseRequestID,
+		)
+	}
 }
 
 func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
