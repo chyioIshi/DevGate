@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/chyioishi/devgate/internal/requestid"
 )
 
 type receivedRequest struct {
@@ -19,9 +21,12 @@ type receivedRequest struct {
 	XForwardedFor   string
 	XForwardedHost  string
 	XForwardedProto string
+	RequestID       string
 }
 
 func TestReverseProxyForwardsRequest(t *testing.T) {
+	const upstreamRequestID = "upstream-controlled-value"
+
 	logger := slog.New(
 		slog.NewTextHandler(io.Discard, nil),
 	)
@@ -35,9 +40,11 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 				XForwardedFor:   r.Header.Get("X-Forwarded-For"),
 				XForwardedHost:  r.Header.Get("X-Forwarded-Host"),
 				XForwardedProto: r.Header.Get("X-Forwarded-Proto"),
+				RequestID:       r.Header.Get(requestid.HeaderName),
 			}
 
 			w.Header().Set("X-Upstream", "true")
+			w.Header().Set(requestid.HeaderName, upstreamRequestID)
 			w.WriteHeader(http.StatusCreated)
 
 			if _, err := io.WriteString(w, "proxied"); err != nil {
@@ -53,7 +60,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 	targetURL.Path = "/api"
 
-	gateway := httptest.NewServer(New(targetURL, logger))
+	gateway := httptest.NewServer(requestid.Middleware(New(targetURL, logger), logger))
 	defer gateway.Close()
 
 	gatewayURL, err := url.Parse(gateway.URL)
@@ -73,6 +80,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "123.123.123.123")
 	req.Header.Set("X-Forwarded-Host", "attacker.example")
 	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set(requestid.HeaderName, "spoofed-client-value")
 
 	resp, err := gateway.Client().Do(req)
 	if err != nil {
@@ -122,17 +130,38 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	if got := resp.Header.Get("X-Upstream"); got != "true" {
 		t.Errorf("response header X-Upstream = %q, want %q", got, "true")
 	}
-
+	responseRequestIDs := resp.Header.Values(requestid.HeaderName)
+	if len(responseRequestIDs) != 1 {
+		t.Fatalf("response request IDs = %q, want exactly one value", responseRequestIDs)
+	}
+	responseRequestID := responseRequestIDs[0]
+	if responseRequestID == "" {
+		t.Fatal("response request ID is empty")
+	}
+	if responseRequestID == upstreamRequestID {
+		t.Error("upstream replaced gateway-generated response request ID")
+	}
+	if responseRequestID == "spoofed-client-value" {
+		t.Error("gateway preserved spoofed client request ID")
+	}
+	if got.RequestID != responseRequestID {
+		t.Errorf(
+			"upstream request ID = %q, want response request ID %q",
+			got.RequestID,
+			responseRequestID,
+		)
+	}
 }
 
 func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	var logBuffer bytes.Buffer
 	var logRecord struct {
-		Level   string `json:"level"`
-		Message string `json:"msg"`
-		Method  string `json:"method"`
-		Path    string `json:"path"`
-		Error   string `json:"error"`
+		Level     string `json:"level"`
+		Message   string `json:"msg"`
+		Method    string `json:"method"`
+		Path      string `json:"path"`
+		RequestID string `json:"request_id"`
+		Error     string `json:"error"`
 	}
 	logger := slog.New(
 		slog.NewJSONHandler(&logBuffer, nil),
@@ -159,7 +188,8 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	proxy := New(targetURL, logger)
-	proxy.ServeHTTP(recorder, req)
+	handler := requestid.Middleware(proxy, logger)
+	handler.ServeHTTP(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()
@@ -173,6 +203,10 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	if string(body) != "Bad Gateway\n" {
 		t.Errorf("body = %q, want %q", string(body), "Bad Gateway\n")
+	}
+	responseRequestID := resp.Header.Get(requestid.HeaderName)
+	if responseRequestID == "" {
+		t.Fatal("response request ID is empty")
 	}
 	if err := json.NewDecoder(&logBuffer).Decode(&logRecord); err != nil {
 		t.Fatalf("decode json-log: %v", err)
@@ -188,6 +222,13 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	if logRecord.Path != req.URL.Path {
 		t.Errorf("log path = %q, want %q", logRecord.Path, req.URL.Path)
+	}
+	if logRecord.RequestID != responseRequestID {
+		t.Errorf(
+			"log request ID = %q, want response request ID %q",
+			logRecord.RequestID,
+			responseRequestID,
+		)
 	}
 	if logRecord.Error == "" {
 		t.Error("log error is empty")
