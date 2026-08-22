@@ -13,6 +13,7 @@ import (
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/gateway"
+	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
 
@@ -51,7 +52,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 
 	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger)
-	mux := newHTTPMux(gatewayHandler)
+	requestIDHandler := requestid.Middleware(gatewayHandler, logger)
+	mux := newHTTPMux(requestIDHandler)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
