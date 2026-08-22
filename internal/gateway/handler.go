@@ -42,6 +42,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"duration_ms", time.Since(startedAt).Seconds()*1000,
 		)
 	}()
+	defer recoverPanic(rw, r, h.logger)
 
 	route, ok := h.routeRouter.Match(r.URL.Path)
 	if !ok {
