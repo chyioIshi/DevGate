@@ -15,6 +15,10 @@ func New(targetURL *url.URL, logger *slog.Logger) *httputil.ReverseProxy {
 			pr.SetURL(targetURL)
 			pr.SetXForwarded()
 		},
+		ModifyResponse: func(response *http.Response) error {
+			response.Header.Del(requestid.HeaderName)
+			return nil
+		},
 		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
 			requestID, _ := requestid.FromContext(req.Context())
 			logger.ErrorContext(
