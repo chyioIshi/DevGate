@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
 
@@ -27,6 +28,7 @@ func New(routeRouter *router.Router, routeHandlers map[string]http.Handler, logg
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	rw := newResponseWriter(w)
+	requestID, _ := requestid.FromContext(r.Context())
 	var routeName string
 	defer func() {
 		h.logger.InfoContext(r.Context(),
@@ -34,6 +36,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"method", r.Method,
 			"path", r.URL.Path,
 			"route", routeName,
+			"request_id", requestID,
 			"status", rw.statusCode,
 			"bytes", rw.bytesWritten,
 			"duration_ms", time.Since(startedAt).Seconds()*1000,
