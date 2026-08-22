@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/gateway"
+	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
 
@@ -91,5 +93,79 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 				t.Errorf("response body = %q, want %q", got, test.wantBody)
 			}
 		})
+	}
+}
+
+func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
+	upstreamRequestIDCh := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			upstreamRequestIDCh <- r.Header.Get(requestid.HeaderName)
+			w.WriteHeader(http.StatusNoContent)
+		},
+	))
+	defer upstream.Close()
+
+	routes, err := routesFromConfig([]config.RouteConfig{
+		{
+			Name:        "upstream",
+			Protocol:    "http",
+			PathPrefix:  "/",
+			UpstreamURL: upstream.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+	routeRouter, err := router.New(routes)
+	if err != nil {
+		t.Fatalf("router.New() error = %v", err)
+	}
+	logger := discardLogger()
+	routeHandlers, err := handlersFromRoutes(routes, logger)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger)
+	handler := newHTTPMux(requestid.Middleware(gatewayHandler, logger))
+
+	request := httptest.NewRequest(http.MethodGet, "/users", nil)
+	request.Header.Set(requestid.HeaderName, "spoofed-client-value")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	responseRequestID := recorder.Header().Get(requestid.HeaderName)
+	if responseRequestID == "" {
+		t.Fatal("response request ID is empty")
+	}
+	if responseRequestID == "spoofed-client-value" {
+		t.Error("gateway preserved spoofed client request ID")
+	}
+	decodedRequestID, err := hex.DecodeString(responseRequestID)
+	if err != nil {
+		t.Fatalf("decode response request ID %q: %v", responseRequestID, err)
+	}
+	if len(decodedRequestID) != 16 {
+		t.Errorf("decoded request ID length = %d, want %d", len(decodedRequestID), 16)
+	}
+	if upstreamRequestID := <-upstreamRequestIDCh; upstreamRequestID != responseRequestID {
+		t.Errorf(
+			"upstream request ID = %q, want response request ID %q",
+			upstreamRequestID,
+			responseRequestID,
+		)
+	}
+
+	healthRequest := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthRecorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(healthRecorder, healthRequest)
+
+	if got := healthRecorder.Header().Get(requestid.HeaderName); got != "" {
+		t.Errorf("health response request ID = %q, want empty value", got)
 	}
 }
