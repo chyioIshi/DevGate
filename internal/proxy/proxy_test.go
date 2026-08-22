@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/chyioishi/devgate/internal/requestid"
 )
 
 type receivedRequest struct {
@@ -128,11 +130,12 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	var logBuffer bytes.Buffer
 	var logRecord struct {
-		Level   string `json:"level"`
-		Message string `json:"msg"`
-		Method  string `json:"method"`
-		Path    string `json:"path"`
-		Error   string `json:"error"`
+		Level     string `json:"level"`
+		Message   string `json:"msg"`
+		Method    string `json:"method"`
+		Path      string `json:"path"`
+		RequestID string `json:"request_id"`
+		Error     string `json:"error"`
 	}
 	logger := slog.New(
 		slog.NewJSONHandler(&logBuffer, nil),
@@ -159,7 +162,8 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 
 	proxy := New(targetURL, logger)
-	proxy.ServeHTTP(recorder, req)
+	handler := requestid.Middleware(proxy, logger)
+	handler.ServeHTTP(recorder, req)
 
 	resp := recorder.Result()
 	defer resp.Body.Close()
@@ -173,6 +177,10 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	if string(body) != "Bad Gateway\n" {
 		t.Errorf("body = %q, want %q", string(body), "Bad Gateway\n")
+	}
+	responseRequestID := resp.Header.Get(requestid.HeaderName)
+	if responseRequestID == "" {
+		t.Fatal("response request ID is empty")
 	}
 	if err := json.NewDecoder(&logBuffer).Decode(&logRecord); err != nil {
 		t.Fatalf("decode json-log: %v", err)
@@ -188,6 +196,13 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	if logRecord.Path != req.URL.Path {
 		t.Errorf("log path = %q, want %q", logRecord.Path, req.URL.Path)
+	}
+	if logRecord.RequestID != responseRequestID {
+		t.Errorf(
+			"log request ID = %q, want response request ID %q",
+			logRecord.RequestID,
+			responseRequestID,
+		)
 	}
 	if logRecord.Error == "" {
 		t.Error("log error is empty")
