@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/chyioishi/devgate/internal/gateway"
+	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
 
@@ -24,7 +25,7 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
 		},
 	})
-	handler := gateway.New(
+	gatewayHandler := gateway.New(
 		routeRouter,
 		map[string]http.Handler{
 			"api": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -34,6 +35,7 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 		},
 		logger,
 	)
+	handler := requestid.Middleware(gatewayHandler, logger)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
@@ -46,13 +48,18 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 	if got, want := recorder.Body.String(), "api"; got != want {
 		t.Errorf("response body = %q, want %q", got, want)
 	}
+	responseRequestID := recorder.Header().Get(requestid.HeaderName)
+	if responseRequestID == "" {
+		t.Fatal("response request ID is empty")
+	}
 	assertAccessLog(t, logOutput, accessLogRecord{
-		Message: "request completed",
-		Method:  http.MethodGet,
-		Path:    "/api/users",
-		Route:   "api",
-		Status:  http.StatusCreated,
-		Bytes:   int64(recorder.Body.Len()),
+		Message:   "request completed",
+		Method:    http.MethodGet,
+		Path:      "/api/users",
+		Route:     "api",
+		RequestID: responseRequestID,
+		Status:    http.StatusCreated,
+		Bytes:     int64(recorder.Body.Len()),
 	})
 }
 
@@ -171,6 +178,7 @@ type accessLogRecord struct {
 	Method         string          `json:"method"`
 	Path           string          `json:"path"`
 	Route          string          `json:"route"`
+	RequestID      string          `json:"request_id"`
 	Status         int             `json:"status"`
 	Bytes          int64           `json:"bytes"`
 	DurationMS     *float64        `json:"duration_ms"`
@@ -207,6 +215,9 @@ func assertAccessLog(t *testing.T, output *bytes.Buffer, want accessLogRecord) {
 	}
 	if got.Route != want.Route {
 		t.Errorf("access log route = %q, want %q", got.Route, want.Route)
+	}
+	if got.RequestID != want.RequestID {
+		t.Errorf("access log request ID = %q, want %q", got.RequestID, want.RequestID)
 	}
 	if got.Status != want.Status {
 		t.Errorf("access log status = %d, want %d", got.Status, want.Status)
