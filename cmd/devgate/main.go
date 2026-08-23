@@ -13,6 +13,7 @@ import (
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/gateway"
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -51,9 +52,10 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("create route handlers: %w", err)
 	}
 
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger)
+	httpMetrics := metrics.NewHTTP()
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger, httpMetrics)
 	requestIDHandler := requestid.Middleware(gatewayHandler, logger)
-	mux := newHTTPMux(requestIDHandler)
+	mux := newHTTPMux(requestIDHandler, httpMetrics.Handler())
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -120,12 +122,13 @@ func serve(ctx context.Context, server *http.Server, logger *slog.Logger, shutdo
 	}
 }
 
-func newHTTPMux(gatewayHandler http.Handler) *http.ServeMux {
+func newHTTPMux(gatewayHandler http.Handler, metricsHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
 	mux.HandleFunc("/healthz", methodNotAllowedHandler)
+	mux.Handle("GET /metrics", metricsHandler)
+	mux.HandleFunc("/metrics", methodNotAllowedHandler)
 	mux.Handle("/", gatewayHandler)
-
 	return mux
 }
 
