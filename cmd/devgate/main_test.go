@@ -8,7 +8,7 @@ import (
 )
 
 func TestHealthHandler(t *testing.T) {
-	mux := newHTTPMux(http.NotFoundHandler())
+	mux := newHTTPMux(http.NotFoundHandler(), http.NotFoundHandler())
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
 
@@ -33,7 +33,7 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
-	mux := newHTTPMux(http.NotFoundHandler())
+	mux := newHTTPMux(http.NotFoundHandler(), http.NotFoundHandler())
 	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
 	w := httptest.NewRecorder()
 
@@ -54,15 +54,18 @@ func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
 func TestMuxRoutesRequestsToProxy(t *testing.T) {
 	path := "/users"
 	wasCalled := false
-	mux := newHTTPMux(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNoContent)
-			wasCalled = true
-			if r.URL.Path != path {
-				t.Errorf("expected request path %q, got %q", path, r.URL.Path)
-			}
-		},
-	))
+	mux := newHTTPMux(
+		http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+				wasCalled = true
+				if r.URL.Path != path {
+					t.Errorf("expected request path %q, got %q", path, r.URL.Path)
+				}
+			},
+		),
+		http.NotFoundHandler(),
+	)
 
 	req := httptest.NewRequest(http.MethodGet, path, nil)
 	w := httptest.NewRecorder()
@@ -77,5 +80,57 @@ func TestMuxRoutesRequestsToProxy(t *testing.T) {
 	}
 	if !wasCalled {
 		t.Errorf("expected proxy handler to be called")
+	}
+}
+
+func TestMuxRoutesMetricsOutsideGateway(t *testing.T) {
+	gatewayCalled := false
+	metricsCalled := false
+	mux := newHTTPMux(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			gatewayCalled = true
+		}),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			metricsCalled = true
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if !metricsCalled {
+		t.Error("metrics handler was not called")
+	}
+	if gatewayCalled {
+		t.Error("gateway handler was called for the metrics endpoint")
+	}
+}
+
+func TestMetricsEndpointRejectsUnsupportedMethod(t *testing.T) {
+	metricsCalled := false
+	mux := newHTTPMux(
+		http.NotFoundHandler(),
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			metricsCalled = true
+		}),
+	)
+	request := httptest.NewRequest(http.MethodPost, "/metrics", nil)
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+	}
+	if got, want := recorder.Header().Get("Allow"), "GET, HEAD"; got != want {
+		t.Errorf("Allow header = %q, want %q", got, want)
+	}
+	if metricsCalled {
+		t.Error("metrics handler was called for an unsupported method")
 	}
 }

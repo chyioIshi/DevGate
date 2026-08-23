@@ -5,10 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/gateway"
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -57,7 +59,7 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger())
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP())
 
 	tests := []struct {
 		name       string
@@ -126,8 +128,12 @@ func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger)
-	handler := newHTTPMux(requestid.Middleware(gatewayHandler, logger))
+	httpMetrics := metrics.NewHTTP()
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger, httpMetrics)
+	handler := newHTTPMux(
+		requestid.Middleware(gatewayHandler, logger),
+		httpMetrics.Handler(),
+	)
 
 	request := httptest.NewRequest(http.MethodGet, "/users", nil)
 	request.Header.Set(requestid.HeaderName, "spoofed-client-value")
@@ -167,5 +173,23 @@ func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
 
 	if got := healthRecorder.Header().Get(requestid.HeaderName); got != "" {
 		t.Errorf("health response request ID = %q, want empty value", got)
+	}
+
+	metricsRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	metricsRecorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(metricsRecorder, metricsRequest)
+
+	if metricsRecorder.Code != http.StatusOK {
+		t.Errorf("metrics status code = %d, want %d", metricsRecorder.Code, http.StatusOK)
+	}
+	for _, want := range []string{
+		`devgate_http_requests_total{route="upstream",status="204"} 1`,
+		`devgate_http_request_duration_seconds_count{route="upstream"} 1`,
+		`devgate_http_requests_in_flight 0`,
+	} {
+		if !strings.Contains(metricsRecorder.Body.String(), want) {
+			t.Errorf("metrics response body does not contain %q", want)
+		}
 	}
 }
