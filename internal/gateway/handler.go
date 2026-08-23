@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -14,22 +15,37 @@ type Handler struct {
 	routeRouter   *router.Router
 	routeHandlers map[string]http.Handler
 	logger        *slog.Logger
+	httpMetrics   *metrics.HTTP
 }
 
-func New(routeRouter *router.Router, routeHandlers map[string]http.Handler, logger *slog.Logger) *Handler {
+func New(
+	routeRouter *router.Router,
+	routeHandlers map[string]http.Handler,
+	logger *slog.Logger,
+	httpMetrics *metrics.HTTP,
+) *Handler {
 	routeHandlersCopy := maps.Clone(routeHandlers)
 	return &Handler{
 		routeRouter:   routeRouter,
 		routeHandlers: routeHandlersCopy,
 		logger:        logger,
+		httpMetrics:   httpMetrics,
 	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
+	h.httpMetrics.RequestStarted()
 	rw := newResponseWriter(w)
 	requestID, _ := requestid.FromContext(r.Context())
-	var routeName string
+	routeName := "unmatched"
+	defer func() {
+		h.httpMetrics.RequestFinished(
+			routeName,
+			rw.statusCode,
+			time.Since(startedAt),
+		)
+	}()
 	defer func() {
 		h.logger.InfoContext(r.Context(),
 			"request completed",

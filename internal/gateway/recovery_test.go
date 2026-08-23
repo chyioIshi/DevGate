@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/chyioishi/devgate/internal/gateway"
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -148,6 +149,7 @@ func newHandlerWithRoute(t *testing.T, logger *slog.Logger, routeHandler http.Ha
 		}),
 		map[string]http.Handler{"api": routeHandler},
 		logger,
+		metrics.NewHTTP(),
 	)
 }
 

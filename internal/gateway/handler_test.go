@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/chyioishi/devgate/internal/gateway"
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -34,6 +35,7 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 			}),
 		},
 		logger,
+		metrics.NewHTTP(),
 	)
 	handler := requestid.Middleware(gatewayHandler, logger)
 
@@ -82,6 +84,7 @@ func TestHandlerReturnsNotFoundWhenRouteDoesNotMatch(t *testing.T) {
 			}),
 		},
 		logger,
+		metrics.NewHTTP(),
 	)
 
 	recorder := httptest.NewRecorder()
@@ -99,7 +102,7 @@ func TestHandlerReturnsNotFoundWhenRouteDoesNotMatch(t *testing.T) {
 		Message: "request completed",
 		Method:  http.MethodGet,
 		Path:    "/orders",
-		Route:   "",
+		Route:   "unmatched",
 		Status:  http.StatusNotFound,
 		Bytes:   int64(recorder.Body.Len()),
 	})
@@ -115,7 +118,7 @@ func TestHandlerReturnsInternalServerErrorWhenRouteHandlerIsMissing(t *testing.T
 			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
 		},
 	})
-	handler := gateway.New(routeRouter, nil, logger)
+	handler := gateway.New(routeRouter, nil, logger, metrics.NewHTTP())
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
@@ -155,7 +158,7 @@ func TestNewCopiesRouteHandlers(t *testing.T) {
 			originalCalled = true
 		}),
 	}
-	handler := gateway.New(routeRouter, routeHandlers, discardLogger())
+	handler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP())
 	routeHandlers["api"] = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		replacementCalled = true
 	})
