@@ -23,14 +23,15 @@ const (
 )
 
 type Config struct {
-	HTTPAddr          string        `env:"DEVGATE_HTTP_ADDR"`
-	ReadHeaderTimeout time.Duration `env:"DEVGATE_READ_HEADER_TIMEOUT"`
-	IdleTimeout       time.Duration `env:"DEVGATE_IDLE_TIMEOUT"`
-	ShutdownTimeout   time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
-	ConfigFile        string        `env:"DEVGATE_CONFIG_FILE"`
-	Routes            []RouteConfig
-	LogFormat         LogFormat `env:"DEVGATE_LOG_FORMAT"`
-	LogLevel          LogLevel  `env:"DEVGATE_LOG_LEVEL"`
+	HTTPAddr                      string        `env:"DEVGATE_HTTP_ADDR"`
+	ReadHeaderTimeout             time.Duration `env:"DEVGATE_READ_HEADER_TIMEOUT"`
+	IdleTimeout                   time.Duration `env:"DEVGATE_IDLE_TIMEOUT"`
+	ShutdownTimeout               time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
+	ConfigFile                    string        `env:"DEVGATE_CONFIG_FILE"`
+	Routes                        []RouteConfig
+	LogFormat                     LogFormat     `env:"DEVGATE_LOG_FORMAT"`
+	LogLevel                      LogLevel      `env:"DEVGATE_LOG_LEVEL"`
+	UpstreamResponseHeaderTimeout time.Duration `env:"DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"`
 }
 
 func (c Config) validate() error {
@@ -59,18 +60,22 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("invalid log level: %q, must be 'info', 'warn', 'error', 'debug'", c.LogLevel)
 	}
+	if c.UpstreamResponseHeaderTimeout <= 0 {
+		return errors.New("upstream response header timeout must be positive")
+	}
 	return nil
 }
 
 func Load() (Config, error) {
 	config := Config{
-		HTTPAddr:          ":8080",
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		ShutdownTimeout:   10 * time.Second,
-		ConfigFile:        "devgate.yaml",
-		LogFormat:         LogFormatText,
-		LogLevel:          LogLevelInfo,
+		HTTPAddr:                      ":8080",
+		ReadHeaderTimeout:             5 * time.Second,
+		IdleTimeout:                   60 * time.Second,
+		ShutdownTimeout:               10 * time.Second,
+		ConfigFile:                    "devgate.yaml",
+		LogFormat:                     LogFormatText,
+		LogLevel:                      LogLevelInfo,
+		UpstreamResponseHeaderTimeout: 10 * time.Second,
 	}
 
 	if err := env.Parse(&config); err != nil {

@@ -55,7 +55,7 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("router.New() error = %v", err)
 	}
-	routeHandlers, err := handlersFromRoutes(routes, discardLogger())
+	routeHandlers, err := handlersFromRoutes(routes, http.DefaultTransport, discardLogger())
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
@@ -124,7 +124,7 @@ func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
 		t.Fatalf("router.New() error = %v", err)
 	}
 	logger := discardLogger()
-	routeHandlers, err := handlersFromRoutes(routes, logger)
+	routeHandlers, err := handlersFromRoutes(routes, http.DefaultTransport, logger)
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}

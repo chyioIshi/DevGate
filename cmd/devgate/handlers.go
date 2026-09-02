@@ -9,13 +9,13 @@ import (
 	"github.com/chyioishi/devgate/internal/router"
 )
 
-func handlersFromRoutes(routes []router.Route, logger *slog.Logger) (map[string]http.Handler, error) {
+func handlersFromRoutes(routes []router.Route, transport http.RoundTripper, logger *slog.Logger) (map[string]http.Handler, error) {
 	handlers := make(map[string]http.Handler, len(routes))
 
 	for _, route := range routes {
 		switch route.Protocol {
 		case router.ProtocolHTTP:
-			handlers[route.Name] = proxy.New(route.UpstreamURL, logger)
+			handlers[route.Name] = proxy.New(route.UpstreamURL, transport, logger)
 		case router.ProtocolGRPC:
 			return nil, fmt.Errorf(
 				"create handler for route %q: gRPC protocol is not supported yet",

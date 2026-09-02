@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chyioishi/devgate/internal/requestid"
 )
@@ -60,7 +63,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 	targetURL.Path = "/api"
 
-	gateway := httptest.NewServer(requestid.Middleware(New(targetURL, logger), logger))
+	gateway := httptest.NewServer(requestid.Middleware(New(targetURL, http.DefaultTransport, logger), logger))
 	defer gateway.Close()
 
 	gatewayURL, err := url.Parse(gateway.URL)
@@ -187,7 +190,7 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	proxy := New(targetURL, logger)
+	proxy := New(targetURL, http.DefaultTransport, logger)
 	handler := requestid.Middleware(proxy, logger)
 	handler.ServeHTTP(recorder, req)
 
@@ -233,4 +236,96 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	if logRecord.Error == "" {
 		t.Error("log error is empty")
 	}
+}
+
+func TestStatusCodeForProxyError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{
+			name: "ordinary error",
+			err:  errors.New("connection refused"),
+			want: http.StatusBadGateway,
+		},
+		{
+			name: "reported timeout",
+			err:  testTimeoutError{timeout: true},
+			want: http.StatusGatewayTimeout,
+		},
+		{
+			name: "reported non-timeout",
+			err:  testTimeoutError{timeout: false},
+			want: http.StatusBadGateway,
+		},
+		{
+			name: "wrapped timeout",
+			err:  fmt.Errorf("round trip: %w", testTimeoutError{timeout: true}),
+			want: http.StatusGatewayTimeout,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := statusCodeForProxyError(test.err); got != test.want {
+				t.Errorf("statusCodeForProxyError() = %d, want %d", got, test.want)
+			}
+		})
+	}
+}
+
+func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.T) {
+	releaseUpstream := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-releaseUpstream
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	defer close(releaseUpstream)
+
+	targetURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	transport, err := NewTransport(100 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	defer transport.CloseIdleConnections()
+
+	proxy := New(targetURL, transport, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, request)
+
+	response := recorder.Result()
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusGatewayTimeout {
+		t.Errorf(
+			"status code = %d, want %d",
+			response.StatusCode,
+			http.StatusGatewayTimeout,
+		)
+	}
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if got, want := string(body), "Gateway Timeout\n"; got != want {
+		t.Errorf("response body = %q, want %q", got, want)
+	}
+}
+
+type testTimeoutError struct {
+	timeout bool
+}
+
+func (e testTimeoutError) Error() string {
+	return "test network error"
+}
+
+func (e testTimeoutError) Timeout() bool {
+	return e.timeout
 }

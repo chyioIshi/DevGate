@@ -20,13 +20,14 @@ routes:
 `
 
 const (
-	envHTTPAddr          = "DEVGATE_HTTP_ADDR"
-	envReadHeaderTimeout = "DEVGATE_READ_HEADER_TIMEOUT"
-	envIdleTimeout       = "DEVGATE_IDLE_TIMEOUT"
-	envShutdownTimeout   = "DEVGATE_SHUTDOWN_TIMEOUT"
-	envConfigFile        = "DEVGATE_CONFIG_FILE"
-	envLogFormat         = "DEVGATE_LOG_FORMAT"
-	envLogLevel          = "DEVGATE_LOG_LEVEL"
+	envHTTPAddr                      = "DEVGATE_HTTP_ADDR"
+	envReadHeaderTimeout             = "DEVGATE_READ_HEADER_TIMEOUT"
+	envIdleTimeout                   = "DEVGATE_IDLE_TIMEOUT"
+	envShutdownTimeout               = "DEVGATE_SHUTDOWN_TIMEOUT"
+	envUpstreamResponseHeaderTimeout = "DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"
+	envConfigFile                    = "DEVGATE_CONFIG_FILE"
+	envLogFormat                     = "DEVGATE_LOG_FORMAT"
+	envLogLevel                      = "DEVGATE_LOG_LEVEL"
 )
 
 var configEnvKeys = []string{
@@ -34,6 +35,7 @@ var configEnvKeys = []string{
 	envReadHeaderTimeout,
 	envIdleTimeout,
 	envShutdownTimeout,
+	envUpstreamResponseHeaderTimeout,
 	envConfigFile,
 	envLogFormat,
 	envLogLevel,
@@ -52,14 +54,15 @@ func TestLoadDefaults(t *testing.T) {
 	}
 
 	want := Config{
-		HTTPAddr:          ":8080",
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		ShutdownTimeout:   10 * time.Second,
-		ConfigFile:        "devgate.yaml",
-		Routes:            testRouteConfigs(),
-		LogFormat:         "text",
-		LogLevel:          "info",
+		HTTPAddr:                      ":8080",
+		ReadHeaderTimeout:             5 * time.Second,
+		IdleTimeout:                   60 * time.Second,
+		ShutdownTimeout:               10 * time.Second,
+		UpstreamResponseHeaderTimeout: 10 * time.Second,
+		ConfigFile:                    "devgate.yaml",
+		Routes:                        testRouteConfigs(),
+		LogFormat:                     "text",
+		LogLevel:                      "info",
 	}
 
 	assertConfigEqual(t, got, want)
@@ -72,6 +75,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envReadHeaderTimeout, "2s")
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
+	t.Setenv(envUpstreamResponseHeaderTimeout, "3s")
 	t.Setenv(envLogFormat, "json")
 	t.Setenv(envLogLevel, "debug")
 	configPath := writeConfigFile(t, testRouteConfigYAML)
@@ -83,14 +87,15 @@ func TestLoadOverrides(t *testing.T) {
 	}
 
 	want := Config{
-		HTTPAddr:          "127.0.0.1:9090",
-		ReadHeaderTimeout: 2 * time.Second,
-		IdleTimeout:       45 * time.Second,
-		ShutdownTimeout:   7 * time.Second,
-		ConfigFile:        configPath,
-		Routes:            testRouteConfigs(),
-		LogFormat:         "json",
-		LogLevel:          "debug",
+		HTTPAddr:                      "127.0.0.1:9090",
+		ReadHeaderTimeout:             2 * time.Second,
+		IdleTimeout:                   45 * time.Second,
+		ShutdownTimeout:               7 * time.Second,
+		UpstreamResponseHeaderTimeout: 3 * time.Second,
+		ConfigFile:                    configPath,
+		Routes:                        testRouteConfigs(),
+		LogFormat:                     "json",
+		LogLevel:                      "debug",
 	}
 
 	assertConfigEqual(t, got, want)
@@ -196,6 +201,18 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 			envValue:    "0s",
 			wantMessage: "shutdown timeout must be positive",
 		},
+		{
+			name:        "zero upstream response header timeout",
+			envKey:      envUpstreamResponseHeaderTimeout,
+			envValue:    "0s",
+			wantMessage: "upstream response header timeout must be positive",
+		},
+		{
+			name:        "negative upstream response header timeout",
+			envKey:      envUpstreamResponseHeaderTimeout,
+			envValue:    "-1s",
+			wantMessage: "upstream response header timeout must be positive",
+		},
 	}
 
 	for _, test := range tests {
@@ -280,6 +297,7 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.ReadHeaderTimeout != want.ReadHeaderTimeout ||
 		got.IdleTimeout != want.IdleTimeout ||
 		got.ShutdownTimeout != want.ShutdownTimeout ||
+		got.UpstreamResponseHeaderTimeout != want.UpstreamResponseHeaderTimeout ||
 		got.ConfigFile != want.ConfigFile ||
 		got.LogFormat != want.LogFormat ||
 		got.LogLevel != want.LogLevel {

@@ -14,6 +14,7 @@ import (
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/gateway"
 	"github.com/chyioishi/devgate/internal/metrics"
+	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -47,7 +48,13 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("build routing table: %w", err)
 	}
-	routeHandlers, err := handlersFromRoutes(routes, logger)
+	upstreamTransport, err := proxy.NewTransport(cfg.UpstreamResponseHeaderTimeout)
+	if err != nil {
+		return fmt.Errorf("create upstream transport: %w", err)
+	}
+	defer upstreamTransport.CloseIdleConnections()
+
+	routeHandlers, err := handlersFromRoutes(routes, upstreamTransport, logger)
 	if err != nil {
 		return fmt.Errorf("create route handlers: %w", err)
 	}

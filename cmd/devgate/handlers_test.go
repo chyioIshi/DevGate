@@ -14,6 +14,7 @@ import (
 )
 
 func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
+	transport := &http.Transport{}
 	routes := []router.Route{
 		{
 			Name:        "users",
@@ -29,7 +30,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		},
 	}
 
-	handlers, err := handlersFromRoutes(routes, discardLogger())
+	handlers, err := handlersFromRoutes(routes, transport, discardLogger())
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
@@ -51,6 +52,14 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		if !ok {
 			t.Errorf("handler for route %q has type %T, want *httputil.ReverseProxy", route.Name, handler)
 			continue
+		}
+		if reverseProxy.Transport != transport {
+			t.Errorf(
+				"handler for route %q transport = %p, want shared transport %p",
+				route.Name,
+				reverseProxy.Transport,
+				transport,
+			)
 		}
 
 		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
@@ -91,7 +100,7 @@ func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 		},
 	}
 
-	handlers, err := handlersFromRoutes(routes, discardLogger())
+	handlers, err := handlersFromRoutes(routes, http.DefaultTransport, discardLogger())
 	if err == nil {
 		t.Fatal("handlersFromRoutes() error = nil, want unsupported gRPC error")
 	}
@@ -116,7 +125,7 @@ func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 		},
 	}
 
-	handlers, err := handlersFromRoutes(routes, discardLogger())
+	handlers, err := handlersFromRoutes(routes, http.DefaultTransport, discardLogger())
 	if err == nil {
 		t.Fatal("handlersFromRoutes() error = nil, want unsupported protocol error")
 	}

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -9,8 +10,9 @@ import (
 	"github.com/chyioishi/devgate/internal/requestid"
 )
 
-func New(targetURL *url.URL, logger *slog.Logger) *httputil.ReverseProxy {
+func New(targetURL *url.URL, transport http.RoundTripper, logger *slog.Logger) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{
+		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(targetURL)
 			pr.SetXForwarded()
@@ -29,12 +31,26 @@ func New(targetURL *url.URL, logger *slog.Logger) *httputil.ReverseProxy {
 				"request_id", requestID,
 				"error", err,
 			)
+			statusCode := statusCodeForProxyError(err)
 			http.Error(
 				rw,
-				http.StatusText(http.StatusBadGateway),
-				http.StatusBadGateway,
+				http.StatusText(statusCode),
+				statusCode,
 			)
 		},
 	}
 	return proxy
+}
+
+type timeoutReporter interface {
+	Timeout() bool
+}
+
+func statusCodeForProxyError(err error) int {
+	var reporter timeoutReporter
+
+	if errors.As(err, &reporter) && reporter.Timeout() {
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadGateway
 }
