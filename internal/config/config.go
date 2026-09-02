@@ -32,6 +32,8 @@ type Config struct {
 	LogFormat                     LogFormat     `env:"DEVGATE_LOG_FORMAT"`
 	LogLevel                      LogLevel      `env:"DEVGATE_LOG_LEVEL"`
 	UpstreamResponseHeaderTimeout time.Duration `env:"DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"`
+	UpstreamMaxAttempts           int           `env:"DEVGATE_UPSTREAM_MAX_ATTEMPTS"`
+	UpstreamRetryBaseDelay        time.Duration `env:"DEVGATE_UPSTREAM_RETRY_BASE_DELAY"`
 }
 
 func (c Config) validate() error {
@@ -63,6 +65,12 @@ func (c Config) validate() error {
 	if c.UpstreamResponseHeaderTimeout <= 0 {
 		return errors.New("upstream response header timeout must be positive")
 	}
+	if c.UpstreamMaxAttempts < 1 || c.UpstreamMaxAttempts > 5 {
+		return errors.New("upstream max attempts must be between 1 and 5")
+	}
+	if c.UpstreamRetryBaseDelay <= 0 {
+		return errors.New("upstream retry base delay must be positive")
+	}
 	return nil
 }
 
@@ -76,6 +84,8 @@ func Load() (Config, error) {
 		LogFormat:                     LogFormatText,
 		LogLevel:                      LogLevelInfo,
 		UpstreamResponseHeaderTimeout: 10 * time.Second,
+		UpstreamMaxAttempts:           2,
+		UpstreamRetryBaseDelay:        100 * time.Millisecond,
 	}
 
 	if err := env.Parse(&config); err != nil {

@@ -54,7 +54,12 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	defer upstreamTransport.CloseIdleConnections()
 
-	routeHandlers, err := handlersFromRoutes(routes, upstreamTransport, logger)
+	retryTransport, err := proxy.NewRetryTransport(upstreamTransport, cfg.UpstreamMaxAttempts, cfg.UpstreamRetryBaseDelay)
+	if err != nil {
+		return fmt.Errorf("create upstream retry transport: %w", err)
+	}
+
+	routeHandlers, err := handlersFromRoutes(routes, retryTransport, logger)
 	if err != nil {
 		return fmt.Errorf("create route handlers: %w", err)
 	}
