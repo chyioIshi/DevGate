@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -315,6 +316,51 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	}
 	if got, want := string(body), "Gateway Timeout\n"; got != want {
 		t.Errorf("response body = %q, want %q", got, want)
+	}
+}
+
+func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
+	var attempts atomic.Int32
+	releaseFirstAttempt := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			<-releaseFirstAttempt
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	defer close(releaseFirstAttempt)
+
+	targetURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	baseTransport, err := NewTransport(100 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewTransport() error = %v", err)
+	}
+	defer baseTransport.CloseIdleConnections()
+	retryTransport, err := NewRetryTransport(baseTransport, 2, time.Nanosecond)
+	if err != nil {
+		t.Fatalf("NewRetryTransport() error = %v", err)
+	}
+
+	proxy := New(
+		targetURL,
+		retryTransport,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Errorf("upstream attempts = %d, want 2", got)
 	}
 }
 
