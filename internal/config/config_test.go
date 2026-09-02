@@ -25,6 +25,8 @@ const (
 	envIdleTimeout                   = "DEVGATE_IDLE_TIMEOUT"
 	envShutdownTimeout               = "DEVGATE_SHUTDOWN_TIMEOUT"
 	envUpstreamResponseHeaderTimeout = "DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"
+	envUpstreamMaxAttempts           = "DEVGATE_UPSTREAM_MAX_ATTEMPTS"
+	envUpstreamRetryBaseDelay        = "DEVGATE_UPSTREAM_RETRY_BASE_DELAY"
 	envConfigFile                    = "DEVGATE_CONFIG_FILE"
 	envLogFormat                     = "DEVGATE_LOG_FORMAT"
 	envLogLevel                      = "DEVGATE_LOG_LEVEL"
@@ -36,6 +38,8 @@ var configEnvKeys = []string{
 	envIdleTimeout,
 	envShutdownTimeout,
 	envUpstreamResponseHeaderTimeout,
+	envUpstreamMaxAttempts,
+	envUpstreamRetryBaseDelay,
 	envConfigFile,
 	envLogFormat,
 	envLogLevel,
@@ -59,6 +63,8 @@ func TestLoadDefaults(t *testing.T) {
 		IdleTimeout:                   60 * time.Second,
 		ShutdownTimeout:               10 * time.Second,
 		UpstreamResponseHeaderTimeout: 10 * time.Second,
+		UpstreamMaxAttempts:           2,
+		UpstreamRetryBaseDelay:        100 * time.Millisecond,
 		ConfigFile:                    "devgate.yaml",
 		Routes:                        testRouteConfigs(),
 		LogFormat:                     "text",
@@ -76,6 +82,8 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
 	t.Setenv(envUpstreamResponseHeaderTimeout, "3s")
+	t.Setenv(envUpstreamMaxAttempts, "4")
+	t.Setenv(envUpstreamRetryBaseDelay, "250ms")
 	t.Setenv(envLogFormat, "json")
 	t.Setenv(envLogLevel, "debug")
 	configPath := writeConfigFile(t, testRouteConfigYAML)
@@ -92,6 +100,8 @@ func TestLoadOverrides(t *testing.T) {
 		IdleTimeout:                   45 * time.Second,
 		ShutdownTimeout:               7 * time.Second,
 		UpstreamResponseHeaderTimeout: 3 * time.Second,
+		UpstreamMaxAttempts:           4,
+		UpstreamRetryBaseDelay:        250 * time.Millisecond,
 		ConfigFile:                    configPath,
 		Routes:                        testRouteConfigs(),
 		LogFormat:                     "json",
@@ -176,7 +186,7 @@ func TestLoadInvalidDuration(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
+func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 	tests := []struct {
 		name        string
 		envKey      string
@@ -213,6 +223,18 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 			envValue:    "-1s",
 			wantMessage: "upstream response header timeout must be positive",
 		},
+		{
+			name:        "zero upstream retry base delay",
+			envKey:      envUpstreamRetryBaseDelay,
+			envValue:    "0s",
+			wantMessage: "upstream retry base delay must be positive",
+		},
+		{
+			name:        "negative upstream retry base delay",
+			envKey:      envUpstreamRetryBaseDelay,
+			envValue:    "-1ms",
+			wantMessage: "upstream retry base delay must be positive",
+		},
 	}
 
 	for _, test := range tests {
@@ -232,6 +254,50 @@ func TestLoadRejectsNonPositiveTimeouts(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.wantMessage) {
 				t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidUpstreamMaxAttempts(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "zero", value: "0"},
+		{name: "negative", value: "-1"},
+		{name: "above maximum", value: "6"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(envUpstreamMaxAttempts, test.value)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want validation error")
+			}
+			assertZeroConfig(t, got)
+			if !strings.Contains(err.Error(), "validate config") {
+				t.Errorf("Load() error = %q, want validation context", err)
+			}
+			if !strings.Contains(err.Error(), "upstream max attempts must be between 1 and 5") {
+				t.Errorf("Load() error = %q, want max attempts context", err)
+			}
+		})
+	}
+}
+
+func TestLoadAcceptsUpstreamMaxAttemptsBoundaries(t *testing.T) {
+	for _, attempts := range []string{"1", "5"} {
+		t.Run(attempts, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(envUpstreamMaxAttempts, attempts)
+			t.Setenv(envConfigFile, writeConfigFile(t, testRouteConfigYAML))
+
+			if _, err := Load(); err != nil {
+				t.Fatalf("Load() error = %v, want valid boundary", err)
 			}
 		})
 	}
@@ -298,6 +364,8 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.IdleTimeout != want.IdleTimeout ||
 		got.ShutdownTimeout != want.ShutdownTimeout ||
 		got.UpstreamResponseHeaderTimeout != want.UpstreamResponseHeaderTimeout ||
+		got.UpstreamMaxAttempts != want.UpstreamMaxAttempts ||
+		got.UpstreamRetryBaseDelay != want.UpstreamRetryBaseDelay ||
 		got.ConfigFile != want.ConfigFile ||
 		got.LogFormat != want.LogFormat ||
 		got.LogLevel != want.LogLevel {
