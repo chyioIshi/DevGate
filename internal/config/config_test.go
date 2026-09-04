@@ -20,16 +20,18 @@ routes:
 `
 
 const (
-	envHTTPAddr                      = "DEVGATE_HTTP_ADDR"
-	envReadHeaderTimeout             = "DEVGATE_READ_HEADER_TIMEOUT"
-	envIdleTimeout                   = "DEVGATE_IDLE_TIMEOUT"
-	envShutdownTimeout               = "DEVGATE_SHUTDOWN_TIMEOUT"
-	envUpstreamResponseHeaderTimeout = "DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"
-	envUpstreamMaxAttempts           = "DEVGATE_UPSTREAM_MAX_ATTEMPTS"
-	envUpstreamRetryBaseDelay        = "DEVGATE_UPSTREAM_RETRY_BASE_DELAY"
-	envConfigFile                    = "DEVGATE_CONFIG_FILE"
-	envLogFormat                     = "DEVGATE_LOG_FORMAT"
-	envLogLevel                      = "DEVGATE_LOG_LEVEL"
+	envHTTPAddr                        = "DEVGATE_HTTP_ADDR"
+	envReadHeaderTimeout               = "DEVGATE_READ_HEADER_TIMEOUT"
+	envIdleTimeout                     = "DEVGATE_IDLE_TIMEOUT"
+	envShutdownTimeout                 = "DEVGATE_SHUTDOWN_TIMEOUT"
+	envUpstreamResponseHeaderTimeout   = "DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"
+	envUpstreamMaxAttempts             = "DEVGATE_UPSTREAM_MAX_ATTEMPTS"
+	envUpstreamRetryBaseDelay          = "DEVGATE_UPSTREAM_RETRY_BASE_DELAY"
+	envUpstreamCircuitFailureThreshold = "DEVGATE_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD"
+	envUpstreamCircuitOpenTimeout      = "DEVGATE_UPSTREAM_CIRCUIT_OPEN_TIMEOUT"
+	envConfigFile                      = "DEVGATE_CONFIG_FILE"
+	envLogFormat                       = "DEVGATE_LOG_FORMAT"
+	envLogLevel                        = "DEVGATE_LOG_LEVEL"
 )
 
 var configEnvKeys = []string{
@@ -40,6 +42,8 @@ var configEnvKeys = []string{
 	envUpstreamResponseHeaderTimeout,
 	envUpstreamMaxAttempts,
 	envUpstreamRetryBaseDelay,
+	envUpstreamCircuitFailureThreshold,
+	envUpstreamCircuitOpenTimeout,
 	envConfigFile,
 	envLogFormat,
 	envLogLevel,
@@ -58,17 +62,19 @@ func TestLoadDefaults(t *testing.T) {
 	}
 
 	want := Config{
-		HTTPAddr:                      ":8080",
-		ReadHeaderTimeout:             5 * time.Second,
-		IdleTimeout:                   60 * time.Second,
-		ShutdownTimeout:               10 * time.Second,
-		UpstreamResponseHeaderTimeout: 10 * time.Second,
-		UpstreamMaxAttempts:           2,
-		UpstreamRetryBaseDelay:        100 * time.Millisecond,
-		ConfigFile:                    "devgate.yaml",
-		Routes:                        testRouteConfigs(),
-		LogFormat:                     "text",
-		LogLevel:                      "info",
+		HTTPAddr:                        ":8080",
+		ReadHeaderTimeout:               5 * time.Second,
+		IdleTimeout:                     60 * time.Second,
+		ShutdownTimeout:                 10 * time.Second,
+		UpstreamResponseHeaderTimeout:   10 * time.Second,
+		UpstreamMaxAttempts:             2,
+		UpstreamRetryBaseDelay:          100 * time.Millisecond,
+		UpstreamCircuitFailureThreshold: 5,
+		UpstreamCircuitOpenTimeout:      30 * time.Second,
+		ConfigFile:                      "devgate.yaml",
+		Routes:                          testRouteConfigs(),
+		LogFormat:                       "text",
+		LogLevel:                        "info",
 	}
 
 	assertConfigEqual(t, got, want)
@@ -84,6 +90,8 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envUpstreamResponseHeaderTimeout, "3s")
 	t.Setenv(envUpstreamMaxAttempts, "4")
 	t.Setenv(envUpstreamRetryBaseDelay, "250ms")
+	t.Setenv(envUpstreamCircuitFailureThreshold, "7")
+	t.Setenv(envUpstreamCircuitOpenTimeout, "45s")
 	t.Setenv(envLogFormat, "json")
 	t.Setenv(envLogLevel, "debug")
 	configPath := writeConfigFile(t, testRouteConfigYAML)
@@ -95,17 +103,19 @@ func TestLoadOverrides(t *testing.T) {
 	}
 
 	want := Config{
-		HTTPAddr:                      "127.0.0.1:9090",
-		ReadHeaderTimeout:             2 * time.Second,
-		IdleTimeout:                   45 * time.Second,
-		ShutdownTimeout:               7 * time.Second,
-		UpstreamResponseHeaderTimeout: 3 * time.Second,
-		UpstreamMaxAttempts:           4,
-		UpstreamRetryBaseDelay:        250 * time.Millisecond,
-		ConfigFile:                    configPath,
-		Routes:                        testRouteConfigs(),
-		LogFormat:                     "json",
-		LogLevel:                      "debug",
+		HTTPAddr:                        "127.0.0.1:9090",
+		ReadHeaderTimeout:               2 * time.Second,
+		IdleTimeout:                     45 * time.Second,
+		ShutdownTimeout:                 7 * time.Second,
+		UpstreamResponseHeaderTimeout:   3 * time.Second,
+		UpstreamMaxAttempts:             4,
+		UpstreamRetryBaseDelay:          250 * time.Millisecond,
+		UpstreamCircuitFailureThreshold: 7,
+		UpstreamCircuitOpenTimeout:      45 * time.Second,
+		ConfigFile:                      configPath,
+		Routes:                          testRouteConfigs(),
+		LogFormat:                       "json",
+		LogLevel:                        "debug",
 	}
 
 	assertConfigEqual(t, got, want)
@@ -235,6 +245,18 @@ func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 			envValue:    "-1ms",
 			wantMessage: "upstream retry base delay must be positive",
 		},
+		{
+			name:        "zero upstream circuit open timeout",
+			envKey:      envUpstreamCircuitOpenTimeout,
+			envValue:    "0s",
+			wantMessage: "upstream circuit open timeout must be positive",
+		},
+		{
+			name:        "negative upstream circuit open timeout",
+			envKey:      envUpstreamCircuitOpenTimeout,
+			envValue:    "-1s",
+			wantMessage: "upstream circuit open timeout must be positive",
+		},
 	}
 
 	for _, test := range tests {
@@ -303,6 +325,27 @@ func TestLoadAcceptsUpstreamMaxAttemptsBoundaries(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidUpstreamCircuitFailureThreshold(t *testing.T) {
+	for _, threshold := range []string{"0", "-1"} {
+		t.Run(threshold, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(envUpstreamCircuitFailureThreshold, threshold)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want validation error")
+			}
+			assertZeroConfig(t, got)
+			if !strings.Contains(err.Error(), "validate config") {
+				t.Errorf("Load() error = %q, want validation context", err)
+			}
+			if !strings.Contains(err.Error(), "upstream circuit failure threshold must be positive") {
+				t.Errorf("Load() error = %q, want circuit failure threshold context", err)
+			}
+		})
+	}
+}
+
 func TestLoadEmptyHTTPAddressUsesDefault(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv(envHTTPAddr, "")
@@ -366,6 +409,8 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.UpstreamResponseHeaderTimeout != want.UpstreamResponseHeaderTimeout ||
 		got.UpstreamMaxAttempts != want.UpstreamMaxAttempts ||
 		got.UpstreamRetryBaseDelay != want.UpstreamRetryBaseDelay ||
+		got.UpstreamCircuitFailureThreshold != want.UpstreamCircuitFailureThreshold ||
+		got.UpstreamCircuitOpenTimeout != want.UpstreamCircuitOpenTimeout ||
 		got.ConfigFile != want.ConfigFile ||
 		got.LogFormat != want.LogFormat ||
 		got.LogLevel != want.LogLevel {
