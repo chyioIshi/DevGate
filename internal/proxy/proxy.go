@@ -49,6 +49,10 @@ type timeoutReporter interface {
 func statusCodeForProxyError(err error) int {
 	var reporter timeoutReporter
 
+	if errors.Is(err, ErrCircuitOpen) {
+		return http.StatusServiceUnavailable
+	}
+
 	if errors.As(err, &reporter) && reporter.Timeout() {
 		return http.StatusGatewayTimeout
 	}

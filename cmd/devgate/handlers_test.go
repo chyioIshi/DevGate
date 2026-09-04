@@ -9,8 +9,15 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/router"
+)
+
+const (
+	testCircuitFailureThreshold = 3
+	testCircuitOpenTimeout      = time.Minute
 )
 
 func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
@@ -30,7 +37,13 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		},
 	}
 
-	handlers, err := handlersFromRoutes(routes, transport, discardLogger())
+	handlers, err := handlersFromRoutes(
+		routes,
+		transport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		discardLogger(),
+	)
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
@@ -38,6 +51,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		t.Fatalf("handlersFromRoutes() handlers length = %d, want %d", len(handlers), len(routes))
 	}
 
+	circuitBreakers := make(map[string]*proxy.CircuitBreakerTransport, len(routes))
 	for _, route := range routes {
 		handler, exists := handlers[route.Name]
 		if !exists {
@@ -53,14 +67,16 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 			t.Errorf("handler for route %q has type %T, want *httputil.ReverseProxy", route.Name, handler)
 			continue
 		}
-		if reverseProxy.Transport != transport {
+		circuitBreaker, ok := reverseProxy.Transport.(*proxy.CircuitBreakerTransport)
+		if !ok {
 			t.Errorf(
-				"handler for route %q transport = %p, want shared transport %p",
+				"handler for route %q transport has type %T, want *proxy.CircuitBreakerTransport",
 				route.Name,
 				reverseProxy.Transport,
-				transport,
 			)
+			continue
 		}
+		circuitBreakers[route.Name] = circuitBreaker
 
 		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
 		proxyRequest := &httputil.ProxyRequest{
@@ -82,6 +98,9 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	if handlers["users"] == handlers["fallback"] {
 		t.Error("different routes share the same handler")
 	}
+	if circuitBreakers["users"] == circuitBreakers["fallback"] {
+		t.Error("different routes share the same circuit breaker")
+	}
 }
 
 func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
@@ -100,7 +119,13 @@ func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 		},
 	}
 
-	handlers, err := handlersFromRoutes(routes, http.DefaultTransport, discardLogger())
+	handlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		discardLogger(),
+	)
 	if err == nil {
 		t.Fatal("handlersFromRoutes() error = nil, want unsupported gRPC error")
 	}
@@ -125,7 +150,13 @@ func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 		},
 	}
 
-	handlers, err := handlersFromRoutes(routes, http.DefaultTransport, discardLogger())
+	handlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		discardLogger(),
+	)
 	if err == nil {
 		t.Fatal("handlersFromRoutes() error = nil, want unsupported protocol error")
 	}
@@ -134,6 +165,37 @@ func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "websocket") {
 		t.Errorf("handlersFromRoutes() error = %q, want route and protocol context", err)
+	}
+}
+
+func TestHandlersFromRoutesReturnsCircuitBreakerConfigurationError(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:        "users",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api/users",
+			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		0,
+		testCircuitOpenTimeout,
+		discardLogger(),
+	)
+	if err == nil {
+		t.Fatal("handlersFromRoutes() error = nil, want circuit breaker configuration error")
+	}
+	if handlers != nil {
+		t.Errorf("handlersFromRoutes() handlers = %+v, want nil", handlers)
+	}
+	if !strings.Contains(err.Error(), "users") {
+		t.Errorf("handlersFromRoutes() error = %q, want route name", err)
+	}
+	if !strings.Contains(err.Error(), "failure threshold") {
+		t.Errorf("handlersFromRoutes() error = %q, want failure threshold context", err)
 	}
 }
 

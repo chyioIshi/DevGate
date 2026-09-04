@@ -251,6 +251,21 @@ func TestStatusCodeForProxyError(t *testing.T) {
 			want: http.StatusBadGateway,
 		},
 		{
+			name: "open circuit",
+			err:  ErrCircuitOpen,
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "wrapped open circuit",
+			err:  fmt.Errorf("round trip: %w", ErrCircuitOpen),
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "open circuit takes precedence over timeout",
+			err:  errors.Join(ErrCircuitOpen, testTimeoutError{timeout: true}),
+			want: http.StatusServiceUnavailable,
+		},
+		{
 			name: "reported timeout",
 			err:  testTimeoutError{timeout: true},
 			want: http.StatusGatewayTimeout,
@@ -273,6 +288,56 @@ func TestStatusCodeForProxyError(t *testing.T) {
 				t.Errorf("statusCodeForProxyError() = %d, want %d", got, test.want)
 			}
 		})
+	}
+}
+
+func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
+	base := &recordingRoundTripper{err: errors.New("upstream unavailable")}
+	circuitBreaker, err := NewCircuitBreakerTransport(base, 1, time.Minute)
+	if err != nil {
+		t.Fatalf("NewCircuitBreakerTransport() error = %v", err)
+	}
+	targetURL := &url.URL{Scheme: "http", Host: "upstream.local"}
+	reverseProxy := New(
+		targetURL,
+		circuitBreaker,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	firstRequest := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	firstRecorder := httptest.NewRecorder()
+	reverseProxy.ServeHTTP(firstRecorder, firstRequest)
+	firstResponse := firstRecorder.Result()
+	defer firstResponse.Body.Close()
+	if firstResponse.StatusCode != http.StatusBadGateway {
+		t.Errorf(
+			"first response status = %d, want %d",
+			firstResponse.StatusCode,
+			http.StatusBadGateway,
+		)
+	}
+
+	secondRequest := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	secondRecorder := httptest.NewRecorder()
+	reverseProxy.ServeHTTP(secondRecorder, secondRequest)
+	secondResponse := secondRecorder.Result()
+	defer secondResponse.Body.Close()
+	if secondResponse.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf(
+			"second response status = %d, want %d",
+			secondResponse.StatusCode,
+			http.StatusServiceUnavailable,
+		)
+	}
+	body, err := io.ReadAll(secondResponse.Body)
+	if err != nil {
+		t.Fatalf("read second response body: %v", err)
+	}
+	if got, want := string(body), "Service Unavailable\n"; got != want {
+		t.Errorf("second response body = %q, want %q", got, want)
+	}
+	if base.calls != 1 {
+		t.Errorf("base RoundTrip() calls = %d, want 1", base.calls)
 	}
 }
 

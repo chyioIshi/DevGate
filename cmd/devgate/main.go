@@ -59,7 +59,13 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("create upstream retry transport: %w", err)
 	}
 
-	routeHandlers, err := handlersFromRoutes(routes, retryTransport, logger)
+	routeHandlers, err := handlersFromRoutes(
+		routes,
+		retryTransport,
+		cfg.UpstreamCircuitFailureThreshold,
+		cfg.UpstreamCircuitOpenTimeout,
+		logger,
+	)
 	if err != nil {
 		return fmt.Errorf("create route handlers: %w", err)
 	}
