@@ -23,17 +23,19 @@ const (
 )
 
 type Config struct {
-	HTTPAddr                      string        `env:"DEVGATE_HTTP_ADDR"`
-	ReadHeaderTimeout             time.Duration `env:"DEVGATE_READ_HEADER_TIMEOUT"`
-	IdleTimeout                   time.Duration `env:"DEVGATE_IDLE_TIMEOUT"`
-	ShutdownTimeout               time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
-	ConfigFile                    string        `env:"DEVGATE_CONFIG_FILE"`
-	Routes                        []RouteConfig
-	LogFormat                     LogFormat     `env:"DEVGATE_LOG_FORMAT"`
-	LogLevel                      LogLevel      `env:"DEVGATE_LOG_LEVEL"`
-	UpstreamResponseHeaderTimeout time.Duration `env:"DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"`
-	UpstreamMaxAttempts           int           `env:"DEVGATE_UPSTREAM_MAX_ATTEMPTS"`
-	UpstreamRetryBaseDelay        time.Duration `env:"DEVGATE_UPSTREAM_RETRY_BASE_DELAY"`
+	HTTPAddr                        string        `env:"DEVGATE_HTTP_ADDR"`
+	ReadHeaderTimeout               time.Duration `env:"DEVGATE_READ_HEADER_TIMEOUT"`
+	IdleTimeout                     time.Duration `env:"DEVGATE_IDLE_TIMEOUT"`
+	ShutdownTimeout                 time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
+	ConfigFile                      string        `env:"DEVGATE_CONFIG_FILE"`
+	Routes                          []RouteConfig
+	LogFormat                       LogFormat     `env:"DEVGATE_LOG_FORMAT"`
+	LogLevel                        LogLevel      `env:"DEVGATE_LOG_LEVEL"`
+	UpstreamResponseHeaderTimeout   time.Duration `env:"DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"`
+	UpstreamMaxAttempts             int           `env:"DEVGATE_UPSTREAM_MAX_ATTEMPTS"`
+	UpstreamRetryBaseDelay          time.Duration `env:"DEVGATE_UPSTREAM_RETRY_BASE_DELAY"`
+	UpstreamCircuitFailureThreshold int           `env:"DEVGATE_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD"`
+	UpstreamCircuitOpenTimeout      time.Duration `env:"DEVGATE_UPSTREAM_CIRCUIT_OPEN_TIMEOUT"`
 }
 
 func (c Config) validate() error {
@@ -71,21 +73,29 @@ func (c Config) validate() error {
 	if c.UpstreamRetryBaseDelay <= 0 {
 		return errors.New("upstream retry base delay must be positive")
 	}
+	if c.UpstreamCircuitFailureThreshold < 1 {
+		return errors.New("upstream circuit failure threshold must be positive")
+	}
+	if c.UpstreamCircuitOpenTimeout <= 0 {
+		return errors.New("upstream circuit open timeout must be positive")
+	}
 	return nil
 }
 
 func Load() (Config, error) {
 	config := Config{
-		HTTPAddr:                      ":8080",
-		ReadHeaderTimeout:             5 * time.Second,
-		IdleTimeout:                   60 * time.Second,
-		ShutdownTimeout:               10 * time.Second,
-		ConfigFile:                    "devgate.yaml",
-		LogFormat:                     LogFormatText,
-		LogLevel:                      LogLevelInfo,
-		UpstreamResponseHeaderTimeout: 10 * time.Second,
-		UpstreamMaxAttempts:           2,
-		UpstreamRetryBaseDelay:        100 * time.Millisecond,
+		HTTPAddr:                        ":8080",
+		ReadHeaderTimeout:               5 * time.Second,
+		IdleTimeout:                     60 * time.Second,
+		ShutdownTimeout:                 10 * time.Second,
+		ConfigFile:                      "devgate.yaml",
+		LogFormat:                       LogFormatText,
+		LogLevel:                        LogLevelInfo,
+		UpstreamResponseHeaderTimeout:   10 * time.Second,
+		UpstreamMaxAttempts:             2,
+		UpstreamRetryBaseDelay:          100 * time.Millisecond,
+		UpstreamCircuitFailureThreshold: 5,
+		UpstreamCircuitOpenTimeout:      30 * time.Second,
 	}
 
 	if err := env.Parse(&config); err != nil {
