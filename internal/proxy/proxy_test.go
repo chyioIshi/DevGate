@@ -293,7 +293,7 @@ func TestStatusCodeForProxyError(t *testing.T) {
 
 func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 	base := &recordingRoundTripper{err: errors.New("upstream unavailable")}
-	circuitBreaker, err := NewCircuitBreakerTransport(base, 1, time.Minute)
+	circuitBreaker, err := NewCircuitBreakerTransport(base, 1, time.Minute, noopCircuitBreakerObserver{})
 	if err != nil {
 		t.Fatalf("NewCircuitBreakerTransport() error = %v", err)
 	}

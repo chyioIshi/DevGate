@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -42,6 +44,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		transport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
 		discardLogger(),
 	)
 	if err != nil {
@@ -124,6 +127,7 @@ func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 		http.DefaultTransport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
 		discardLogger(),
 	)
 	if err == nil {
@@ -155,6 +159,7 @@ func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 		http.DefaultTransport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
 		discardLogger(),
 	)
 	if err == nil {
@@ -183,6 +188,7 @@ func TestHandlersFromRoutesReturnsCircuitBreakerConfigurationError(t *testing.T)
 		http.DefaultTransport,
 		0,
 		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
 		discardLogger(),
 	)
 	if err == nil {
@@ -212,4 +218,8 @@ func mustParseRouteURL(t *testing.T, rawURL string) *url.URL {
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func newTestCircuitBreakerMetrics() *metrics.CircuitBreaker {
+	return metrics.NewCircuitBreaker(prometheus.NewRegistry())
 }
