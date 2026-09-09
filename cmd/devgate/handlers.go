@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -15,6 +16,7 @@ func handlersFromRoutes(
 	transport http.RoundTripper,
 	circuitFailureThreshold int,
 	circuitOpenTimeout time.Duration,
+	circuitBreakerMetrics *metrics.CircuitBreaker,
 	logger *slog.Logger,
 ) (map[string]http.Handler, error) {
 	handlers := make(map[string]http.Handler, len(routes))
@@ -22,10 +24,12 @@ func handlersFromRoutes(
 	for _, route := range routes {
 		switch route.Protocol {
 		case router.ProtocolHTTP:
+			circuitBreakerRouteMetrics := circuitBreakerMetrics.ForRoute(route.Name)
 			circuitBreakerTransport, err := proxy.NewCircuitBreakerTransport(
 				transport,
 				circuitFailureThreshold,
 				circuitOpenTimeout,
+				circuitBreakerRouteMetrics,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("create circuit breaker transport for route %q: %w", route.Name, err)

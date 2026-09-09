@@ -13,6 +13,7 @@ import (
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
@@ -55,17 +56,19 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("router.New() error = %v", err)
 	}
+	registry := prometheus.NewRegistry()
 	routeHandlers, err := handlersFromRoutes(
 		routes,
 		http.DefaultTransport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		metrics.NewCircuitBreaker(registry),
 		discardLogger(),
 	)
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP())
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(registry))
 
 	tests := []struct {
 		name       string
@@ -130,21 +133,23 @@ func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
 		t.Fatalf("router.New() error = %v", err)
 	}
 	logger := discardLogger()
+	registry := prometheus.NewRegistry()
 	routeHandlers, err := handlersFromRoutes(
 		routes,
 		http.DefaultTransport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		metrics.NewCircuitBreaker(registry),
 		logger,
 	)
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	httpMetrics := metrics.NewHTTP()
+	httpMetrics := metrics.NewHTTP(registry)
 	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger, httpMetrics)
 	handler := newHTTPMux(
 		requestid.Middleware(gatewayHandler, logger),
-		httpMetrics.Handler(),
+		metrics.Handler(registry),
 	)
 
 	request := httptest.NewRequest(http.MethodGet, "/users", nil)

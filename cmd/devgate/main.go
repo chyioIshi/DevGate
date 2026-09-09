@@ -17,6 +17,7 @@ import (
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func main() {
@@ -59,21 +60,25 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("create upstream retry transport: %w", err)
 	}
 
+	promRegistry := prometheus.NewRegistry()
+	circuitBreakerMetrics := metrics.NewCircuitBreaker(promRegistry)
+	httpMetrics := metrics.NewHTTP(promRegistry)
+
 	routeHandlers, err := handlersFromRoutes(
 		routes,
 		retryTransport,
 		cfg.UpstreamCircuitFailureThreshold,
 		cfg.UpstreamCircuitOpenTimeout,
+		circuitBreakerMetrics,
 		logger,
 	)
 	if err != nil {
 		return fmt.Errorf("create route handlers: %w", err)
 	}
 
-	httpMetrics := metrics.NewHTTP()
 	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger, httpMetrics)
 	requestIDHandler := requestid.Middleware(gatewayHandler, logger)
-	mux := newHTTPMux(requestIDHandler, httpMetrics.Handler())
+	mux := newHTTPMux(requestIDHandler, metrics.Handler(promRegistry))
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

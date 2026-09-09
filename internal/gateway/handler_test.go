@@ -14,6 +14,7 @@ import (
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
@@ -35,7 +36,7 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 			}),
 		},
 		logger,
-		metrics.NewHTTP(),
+		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
 	handler := requestid.Middleware(gatewayHandler, logger)
 
@@ -84,7 +85,7 @@ func TestHandlerReturnsNotFoundWhenRouteDoesNotMatch(t *testing.T) {
 			}),
 		},
 		logger,
-		metrics.NewHTTP(),
+		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
 
 	recorder := httptest.NewRecorder()
@@ -118,7 +119,7 @@ func TestHandlerReturnsInternalServerErrorWhenRouteHandlerIsMissing(t *testing.T
 			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
 		},
 	})
-	handler := gateway.New(routeRouter, nil, logger, metrics.NewHTTP())
+	handler := gateway.New(routeRouter, nil, logger, metrics.NewHTTP(prometheus.NewRegistry()))
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
@@ -158,7 +159,7 @@ func TestNewCopiesRouteHandlers(t *testing.T) {
 			originalCalled = true
 		}),
 	}
-	handler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP())
+	handler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(prometheus.NewRegistry()))
 	routeHandlers["api"] = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		replacementCalled = true
 	})

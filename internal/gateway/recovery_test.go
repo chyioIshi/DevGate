@@ -14,6 +14,7 @@ import (
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestHandlerRecoversPanicBeforeResponse(t *testing.T) {
@@ -149,7 +150,7 @@ func newHandlerWithRoute(t *testing.T, logger *slog.Logger, routeHandler http.Ha
 		}),
 		map[string]http.Handler{"api": routeHandler},
 		logger,
-		metrics.NewHTTP(),
+		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
 }
 

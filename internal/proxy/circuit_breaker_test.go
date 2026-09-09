@@ -5,17 +5,89 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
+type noopCircuitBreakerObserver struct{}
+
+func (noopCircuitBreakerObserver) RecordRejectedRequest() {}
+
+func (noopCircuitBreakerObserver) RecordStateTransition(CircuitState, CircuitState) {}
+
+type recordingCircuitBreakerObserver struct {
+	mu                       sync.Mutex
+	rejectedRequestCount     int
+	recordedStateTransitions []recordedStateTransition
+}
+
+type recordedStateTransition struct {
+	from CircuitState
+	to   CircuitState
+}
+
+func (o *recordingCircuitBreakerObserver) RecordRejectedRequest() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.rejectedRequestCount++
+}
+
+func (o *recordingCircuitBreakerObserver) RecordStateTransition(from, to CircuitState) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	o.recordedStateTransitions = append(
+		o.recordedStateTransitions,
+		recordedStateTransition{from: from, to: to},
+	)
+}
+
+func (o *recordingCircuitBreakerObserver) rejectedRequests() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return o.rejectedRequestCount
+}
+
+func (o *recordingCircuitBreakerObserver) stateTransitions() []recordedStateTransition {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	return slices.Clone(o.recordedStateTransitions)
+}
+
+func TestCircuitStateString(t *testing.T) {
+	tests := []struct {
+		name  string
+		state CircuitState
+		want  string
+	}{
+		{name: "closed", state: CircuitStateClosed, want: "closed"},
+		{name: "open", state: CircuitStateOpen, want: "open"},
+		{name: "half open", state: CircuitStateHalfOpen, want: "half_open"},
+		{name: "unknown", state: CircuitState(99), want: "unknown"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.state.String(); got != test.want {
+				t.Errorf("CircuitState.String() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestNewCircuitBreakerTransportStoresConfiguration(t *testing.T) {
 	base := testRoundTripper{}
+	observer := noopCircuitBreakerObserver{}
 	const failureThreshold = 3
 	const openTimeout = 30 * time.Second
 
-	transport, err := NewCircuitBreakerTransport(base, failureThreshold, openTimeout)
+	transport, err := NewCircuitBreakerTransport(base, failureThreshold, openTimeout, observer)
 	if err != nil {
 		t.Fatalf("NewCircuitBreakerTransport() error = %v", err)
 	}
@@ -34,8 +106,11 @@ func TestNewCircuitBreakerTransportStoresConfiguration(t *testing.T) {
 	if transport.now == nil {
 		t.Fatal("now function = nil, want time source")
 	}
-	if transport.state != circuitClosed {
-		t.Errorf("initial state = %d, want circuitClosed", transport.state)
+	if transport.observer != observer {
+		t.Errorf("observer = %T, want original observer %T", transport.observer, observer)
+	}
+	if transport.state != CircuitStateClosed {
+		t.Errorf("initial state = %d, want CircuitStateClosed", transport.state)
 	}
 	if transport.consecutiveFailures != 0 {
 		t.Errorf("initial consecutiveFailures = %d, want 0", transport.consecutiveFailures)
@@ -51,6 +126,7 @@ func TestNewCircuitBreakerTransportRejectsInvalidConfiguration(t *testing.T) {
 		base             http.RoundTripper
 		failureThreshold int
 		openTimeout      time.Duration
+		observer         CircuitBreakerObserver
 		wantMessage      string
 	}{
 		{
@@ -85,6 +161,13 @@ func TestNewCircuitBreakerTransportRejectsInvalidConfiguration(t *testing.T) {
 			openTimeout:      -time.Second,
 			wantMessage:      "circuit open timeout must be positive",
 		},
+		{
+			name:             "nil observer",
+			base:             testRoundTripper{},
+			failureThreshold: 1,
+			openTimeout:      time.Second,
+			wantMessage:      "observer must not be nil",
+		},
 	}
 
 	for _, test := range tests {
@@ -93,6 +176,7 @@ func TestNewCircuitBreakerTransportRejectsInvalidConfiguration(t *testing.T) {
 				test.base,
 				test.failureThreshold,
 				test.openTimeout,
+				test.observer,
 			)
 			if err == nil {
 				t.Fatal("NewCircuitBreakerTransport() error = nil, want validation error")
@@ -183,8 +267,9 @@ func TestClassifyCircuitOutcome(t *testing.T) {
 
 func TestCircuitBreakerAcquirePermitClosed(t *testing.T) {
 	transport := &CircuitBreakerTransport{
+		observer:   noopCircuitBreakerObserver{},
 		generation: 7,
-		state:      circuitClosed,
+		state:      CircuitStateClosed,
 	}
 
 	permit, err := transport.acquirePermit()
@@ -195,8 +280,8 @@ func TestCircuitBreakerAcquirePermitClosed(t *testing.T) {
 	if permit != want {
 		t.Errorf("acquirePermit() permit = %+v, want %+v", permit, want)
 	}
-	if transport.state != circuitClosed {
-		t.Errorf("state = %d, want circuitClosed", transport.state)
+	if transport.state != CircuitStateClosed {
+		t.Errorf("state = %d, want CircuitStateClosed", transport.state)
 	}
 }
 
@@ -204,8 +289,9 @@ func TestCircuitBreakerAcquirePermitOpenBeforeCooldown(t *testing.T) {
 	openedAt := time.Unix(1_000, 0)
 	const openTimeout = 10 * time.Second
 	transport := &CircuitBreakerTransport{
+		observer:    noopCircuitBreakerObserver{},
 		generation:  3,
-		state:       circuitOpen,
+		state:       CircuitStateOpen,
 		openTimeout: openTimeout,
 		openedAt:    openedAt,
 		now: func() time.Time {
@@ -220,17 +306,19 @@ func TestCircuitBreakerAcquirePermitOpenBeforeCooldown(t *testing.T) {
 	if permit != (circuitPermit{}) {
 		t.Errorf("acquirePermit() permit = %+v, want zero permit", permit)
 	}
-	if transport.state != circuitOpen {
-		t.Errorf("state = %d, want circuitOpen", transport.state)
+	if transport.state != CircuitStateOpen {
+		t.Errorf("state = %d, want CircuitStateOpen", transport.state)
 	}
 }
 
 func TestCircuitBreakerAcquirePermitOpenAtCooldownBoundary(t *testing.T) {
 	openedAt := time.Unix(1_000, 0)
 	const openTimeout = 10 * time.Second
+	observer := &recordingCircuitBreakerObserver{}
 	transport := &CircuitBreakerTransport{
+		observer:    observer,
 		generation:  5,
-		state:       circuitOpen,
+		state:       CircuitStateOpen,
 		openTimeout: openTimeout,
 		openedAt:    openedAt,
 		now: func() time.Time {
@@ -246,15 +334,22 @@ func TestCircuitBreakerAcquirePermitOpenAtCooldownBoundary(t *testing.T) {
 	if permit != want {
 		t.Errorf("acquirePermit() permit = %+v, want %+v", permit, want)
 	}
-	if transport.state != circuitHalfOpen {
-		t.Errorf("state = %d, want circuitHalfOpen", transport.state)
+	if transport.state != CircuitStateHalfOpen {
+		t.Errorf("state = %d, want CircuitStateHalfOpen", transport.state)
+	}
+	wantTransitions := []recordedStateTransition{
+		{from: CircuitStateOpen, to: CircuitStateHalfOpen},
+	}
+	if got := observer.stateTransitions(); !slices.Equal(got, wantTransitions) {
+		t.Errorf("state transitions = %+v, want %+v", got, wantTransitions)
 	}
 }
 
 func TestCircuitBreakerAcquirePermitHalfOpen(t *testing.T) {
 	transport := &CircuitBreakerTransport{
+		observer:   noopCircuitBreakerObserver{},
 		generation: 9,
-		state:      circuitHalfOpen,
+		state:      CircuitStateHalfOpen,
 	}
 
 	permit, err := transport.acquirePermit()
@@ -264,8 +359,8 @@ func TestCircuitBreakerAcquirePermitHalfOpen(t *testing.T) {
 	if permit != (circuitPermit{}) {
 		t.Errorf("acquirePermit() permit = %+v, want zero permit", permit)
 	}
-	if transport.state != circuitHalfOpen {
-		t.Errorf("state = %d, want circuitHalfOpen", transport.state)
+	if transport.state != CircuitStateHalfOpen {
+		t.Errorf("state = %d, want CircuitStateHalfOpen", transport.state)
 	}
 }
 
@@ -276,8 +371,9 @@ func TestCircuitBreakerAcquirePermitAllowsOneHalfOpenProbeConcurrently(t *testin
 		requestCount = 64
 	)
 	transport := &CircuitBreakerTransport{
+		observer:    noopCircuitBreakerObserver{},
 		generation:  11,
-		state:       circuitOpen,
+		state:       CircuitStateOpen,
 		openTimeout: openTimeout,
 		openedAt:    openedAt,
 		now: func() time.Time {
@@ -328,8 +424,8 @@ func TestCircuitBreakerAcquirePermitAllowsOneHalfOpenProbeConcurrently(t *testin
 	if rejected != requestCount-1 {
 		t.Errorf("rejected requests = %d, want %d", rejected, requestCount-1)
 	}
-	if transport.state != circuitHalfOpen {
-		t.Errorf("state = %d, want circuitHalfOpen", transport.state)
+	if transport.state != CircuitStateHalfOpen {
+		t.Errorf("state = %d, want CircuitStateHalfOpen", transport.state)
 	}
 }
 
@@ -339,23 +435,24 @@ func TestCircuitBreakerRecordOutcomeForClosedCircuit(t *testing.T) {
 		name            string
 		initialFailures int
 		outcome         circuitOutcome
-		wantState       circuitState
+		wantState       CircuitState
 		wantFailures    int
 		wantGeneration  uint64
 		wantOpenedAt    time.Time
+		wantTransitions []recordedStateTransition
 	}{
 		{
 			name:            "success resets consecutive failures",
 			initialFailures: 2,
 			outcome:         circuitOutcomeSuccess,
-			wantState:       circuitClosed,
+			wantState:       CircuitStateClosed,
 			wantGeneration:  7,
 		},
 		{
 			name:            "ignored outcome preserves consecutive failures",
 			initialFailures: 2,
 			outcome:         circuitOutcomeIgnored,
-			wantState:       circuitClosed,
+			wantState:       CircuitStateClosed,
 			wantFailures:    2,
 			wantGeneration:  7,
 		},
@@ -363,7 +460,7 @@ func TestCircuitBreakerRecordOutcomeForClosedCircuit(t *testing.T) {
 			name:            "failure below threshold increments counter",
 			initialFailures: 1,
 			outcome:         circuitOutcomeFailure,
-			wantState:       circuitClosed,
+			wantState:       CircuitStateClosed,
 			wantFailures:    2,
 			wantGeneration:  7,
 		},
@@ -371,15 +468,18 @@ func TestCircuitBreakerRecordOutcomeForClosedCircuit(t *testing.T) {
 			name:            "failure reaching threshold opens circuit",
 			initialFailures: 2,
 			outcome:         circuitOutcomeFailure,
-			wantState:       circuitOpen,
+			wantState:       CircuitStateOpen,
 			wantGeneration:  8,
 			wantOpenedAt:    now,
+			wantTransitions: []recordedStateTransition{
+				{from: CircuitStateClosed, to: CircuitStateOpen},
+			},
 		},
 		{
 			name:            "unknown outcome changes nothing",
 			initialFailures: 2,
 			outcome:         circuitOutcome(99),
-			wantState:       circuitClosed,
+			wantState:       CircuitStateClosed,
 			wantFailures:    2,
 			wantGeneration:  7,
 		},
@@ -387,11 +487,13 @@ func TestCircuitBreakerRecordOutcomeForClosedCircuit(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			observer := &recordingCircuitBreakerObserver{}
 			transport := &CircuitBreakerTransport{
+				observer:            observer,
 				failureThreshold:    3,
 				now:                 func() time.Time { return now },
 				generation:          7,
-				state:               circuitClosed,
+				state:               CircuitStateClosed,
 				consecutiveFailures: test.initialFailures,
 			}
 			permit := circuitPermit{generation: 7}
@@ -414,6 +516,9 @@ func TestCircuitBreakerRecordOutcomeForClosedCircuit(t *testing.T) {
 			if transport.openedAt != test.wantOpenedAt {
 				t.Errorf("openedAt = %s, want %s", transport.openedAt, test.wantOpenedAt)
 			}
+			if got := observer.stateTransitions(); !slices.Equal(got, test.wantTransitions) {
+				t.Errorf("state transitions = %+v, want %+v", got, test.wantTransitions)
+			}
 		})
 	}
 }
@@ -422,37 +527,47 @@ func TestCircuitBreakerRecordOutcomeForHalfOpenProbe(t *testing.T) {
 	openedAt := time.Unix(2_000, 0)
 	now := openedAt.Add(30 * time.Second)
 	tests := []struct {
-		name           string
-		outcome        circuitOutcome
-		wantState      circuitState
-		wantFailures   int
-		wantGeneration uint64
-		wantOpenedAt   time.Time
+		name            string
+		outcome         circuitOutcome
+		wantState       CircuitState
+		wantFailures    int
+		wantGeneration  uint64
+		wantOpenedAt    time.Time
+		wantTransitions []recordedStateTransition
 	}{
 		{
 			name:           "success closes circuit",
 			outcome:        circuitOutcomeSuccess,
-			wantState:      circuitClosed,
+			wantState:      CircuitStateClosed,
 			wantGeneration: 10,
+			wantTransitions: []recordedStateTransition{
+				{from: CircuitStateHalfOpen, to: CircuitStateClosed},
+			},
 		},
 		{
 			name:           "failure reopens circuit and restarts cooldown",
 			outcome:        circuitOutcomeFailure,
-			wantState:      circuitOpen,
+			wantState:      CircuitStateOpen,
 			wantGeneration: 10,
 			wantOpenedAt:   now,
+			wantTransitions: []recordedStateTransition{
+				{from: CircuitStateHalfOpen, to: CircuitStateOpen},
+			},
 		},
 		{
 			name:           "ignored outcome releases probe without restarting cooldown",
 			outcome:        circuitOutcomeIgnored,
-			wantState:      circuitOpen,
+			wantState:      CircuitStateOpen,
 			wantGeneration: 10,
 			wantOpenedAt:   openedAt,
+			wantTransitions: []recordedStateTransition{
+				{from: CircuitStateHalfOpen, to: CircuitStateOpen},
+			},
 		},
 		{
 			name:           "unknown outcome changes nothing",
 			outcome:        circuitOutcome(99),
-			wantState:      circuitHalfOpen,
+			wantState:      CircuitStateHalfOpen,
 			wantFailures:   4,
 			wantGeneration: 9,
 			wantOpenedAt:   openedAt,
@@ -461,10 +576,12 @@ func TestCircuitBreakerRecordOutcomeForHalfOpenProbe(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			observer := &recordingCircuitBreakerObserver{}
 			transport := &CircuitBreakerTransport{
+				observer:            observer,
 				now:                 func() time.Time { return now },
 				generation:          9,
-				state:               circuitHalfOpen,
+				state:               CircuitStateHalfOpen,
 				consecutiveFailures: 4,
 				openedAt:            openedAt,
 			}
@@ -488,6 +605,9 @@ func TestCircuitBreakerRecordOutcomeForHalfOpenProbe(t *testing.T) {
 			if transport.openedAt != test.wantOpenedAt {
 				t.Errorf("openedAt = %s, want %s", transport.openedAt, test.wantOpenedAt)
 			}
+			if got := observer.stateTransitions(); !slices.Equal(got, test.wantTransitions) {
+				t.Errorf("state transitions = %+v, want %+v", got, test.wantTransitions)
+			}
 		})
 	}
 }
@@ -495,10 +615,11 @@ func TestCircuitBreakerRecordOutcomeForHalfOpenProbe(t *testing.T) {
 func TestCircuitBreakerRecordOutcomeIgnoresStaleGeneration(t *testing.T) {
 	openedAt := time.Unix(2_000, 0)
 	transport := &CircuitBreakerTransport{
+		observer:            noopCircuitBreakerObserver{},
 		failureThreshold:    1,
 		now:                 func() time.Time { return openedAt.Add(time.Minute) },
 		generation:          4,
-		state:               circuitClosed,
+		state:               CircuitStateClosed,
 		consecutiveFailures: 2,
 		openedAt:            openedAt,
 	}
@@ -506,8 +627,8 @@ func TestCircuitBreakerRecordOutcomeIgnoresStaleGeneration(t *testing.T) {
 
 	transport.recordOutcome(stalePermit, circuitOutcomeFailure)
 
-	if transport.state != circuitClosed {
-		t.Errorf("state = %d, want circuitClosed", transport.state)
+	if transport.state != CircuitStateClosed {
+		t.Errorf("state = %d, want CircuitStateClosed", transport.state)
 	}
 	if transport.generation != 4 {
 		t.Errorf("generation = %d, want 4", transport.generation)
@@ -523,27 +644,27 @@ func TestCircuitBreakerRecordOutcomeIgnoresStaleGeneration(t *testing.T) {
 func TestCircuitBreakerRecordOutcomeRejectsPermitForWrongState(t *testing.T) {
 	tests := []struct {
 		name   string
-		state  circuitState
+		state  CircuitState
 		permit circuitPermit
 	}{
 		{
 			name:   "normal permit while circuit is open",
-			state:  circuitOpen,
+			state:  CircuitStateOpen,
 			permit: circuitPermit{generation: 6},
 		},
 		{
 			name:   "normal permit while circuit is half-open",
-			state:  circuitHalfOpen,
+			state:  CircuitStateHalfOpen,
 			permit: circuitPermit{generation: 6},
 		},
 		{
 			name:   "probe permit while circuit is closed",
-			state:  circuitClosed,
+			state:  CircuitStateClosed,
 			permit: circuitPermit{generation: 6, probe: true},
 		},
 		{
 			name:   "probe permit while circuit is open",
-			state:  circuitOpen,
+			state:  CircuitStateOpen,
 			permit: circuitPermit{generation: 6, probe: true},
 		},
 	}
@@ -552,6 +673,7 @@ func TestCircuitBreakerRecordOutcomeRejectsPermitForWrongState(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			openedAt := time.Unix(2_000, 0)
 			transport := &CircuitBreakerTransport{
+				observer:            noopCircuitBreakerObserver{},
 				failureThreshold:    1,
 				now:                 func() time.Time { return openedAt.Add(time.Minute) },
 				generation:          6,
@@ -585,10 +707,11 @@ func TestCircuitBreakerRecordOutcomeOpensOnceConcurrently(t *testing.T) {
 		requestCount     = 64
 	)
 	transport := &CircuitBreakerTransport{
+		observer:         noopCircuitBreakerObserver{},
 		failureThreshold: failureThreshold,
 		now:              func() time.Time { return now },
 		generation:       12,
-		state:            circuitClosed,
+		state:            CircuitStateClosed,
 	}
 	permit := circuitPermit{generation: 12}
 	done := make(chan struct{}, requestCount)
@@ -603,8 +726,8 @@ func TestCircuitBreakerRecordOutcomeOpensOnceConcurrently(t *testing.T) {
 		<-done
 	}
 
-	if transport.state != circuitOpen {
-		t.Errorf("state = %d, want circuitOpen", transport.state)
+	if transport.state != CircuitStateOpen {
+		t.Errorf("state = %d, want CircuitStateOpen", transport.state)
 	}
 	if transport.generation != 13 {
 		t.Errorf("generation = %d, want 13", transport.generation)
@@ -620,7 +743,7 @@ func TestCircuitBreakerRecordOutcomeOpensOnceConcurrently(t *testing.T) {
 func TestCircuitBreakerRoundTripForwardsAllowedRequest(t *testing.T) {
 	wantResponse := &http.Response{StatusCode: http.StatusNoContent}
 	base := &recordingRoundTripper{response: wantResponse}
-	transport, err := NewCircuitBreakerTransport(base, 3, time.Minute)
+	transport, err := NewCircuitBreakerTransport(base, 3, time.Minute, noopCircuitBreakerObserver{})
 	if err != nil {
 		t.Fatalf("NewCircuitBreakerTransport() error = %v", err)
 	}
@@ -645,7 +768,8 @@ func TestCircuitBreakerRoundTripForwardsAllowedRequest(t *testing.T) {
 func TestCircuitBreakerRoundTripOpensAfterTransportFailures(t *testing.T) {
 	upstreamErr := errors.New("upstream unavailable")
 	base := &recordingRoundTripper{err: upstreamErr}
-	transport, err := NewCircuitBreakerTransport(base, 2, time.Minute)
+	observer := &recordingCircuitBreakerObserver{}
+	transport, err := NewCircuitBreakerTransport(base, 2, time.Minute, observer)
 	if err != nil {
 		t.Fatalf("NewCircuitBreakerTransport() error = %v", err)
 	}
@@ -671,15 +795,18 @@ func TestCircuitBreakerRoundTripOpensAfterTransportFailures(t *testing.T) {
 	if base.calls != 2 {
 		t.Errorf("base RoundTrip() calls = %d, want 2", base.calls)
 	}
-	if transport.state != circuitOpen {
-		t.Errorf("state = %d, want circuitOpen", transport.state)
+	if transport.state != CircuitStateOpen {
+		t.Errorf("state = %d, want CircuitStateOpen", transport.state)
+	}
+	if got := observer.rejectedRequests(); got != 1 {
+		t.Errorf("rejected request observations = %d, want 1", got)
 	}
 }
 
 func TestCircuitBreakerRoundTripCountsServerErrorResponse(t *testing.T) {
 	wantResponse := &http.Response{StatusCode: http.StatusServiceUnavailable}
 	base := &recordingRoundTripper{response: wantResponse}
-	transport, err := NewCircuitBreakerTransport(base, 1, time.Minute)
+	transport, err := NewCircuitBreakerTransport(base, 1, time.Minute, noopCircuitBreakerObserver{})
 	if err != nil {
 		t.Fatalf("NewCircuitBreakerTransport() error = %v", err)
 	}
@@ -693,8 +820,8 @@ func TestCircuitBreakerRoundTripCountsServerErrorResponse(t *testing.T) {
 	if response != wantResponse {
 		t.Errorf("RoundTrip() response = %p, want %p", response, wantResponse)
 	}
-	if transport.state != circuitOpen {
-		t.Errorf("state = %d, want circuitOpen", transport.state)
+	if transport.state != CircuitStateOpen {
+		t.Errorf("state = %d, want CircuitStateOpen", transport.state)
 	}
 	if base.calls != 1 {
 		t.Errorf("base RoundTrip() calls = %d, want 1", base.calls)
@@ -712,6 +839,7 @@ func TestCircuitBreakerRoundTripAllowsAnotherProbeAfterCanceledProbe(t *testing.
 		},
 	}
 	transport := &CircuitBreakerTransport{
+		observer:         noopCircuitBreakerObserver{},
 		base:             base,
 		failureThreshold: 1,
 		openTimeout:      openTimeout,
@@ -719,7 +847,7 @@ func TestCircuitBreakerRoundTripAllowsAnotherProbeAfterCanceledProbe(t *testing.
 			return openedAt.Add(openTimeout)
 		},
 		generation: 4,
-		state:      circuitOpen,
+		state:      CircuitStateOpen,
 		openedAt:   openedAt,
 	}
 	canceledCtx, cancel := context.WithCancel(context.Background())
@@ -737,8 +865,8 @@ func TestCircuitBreakerRoundTripAllowsAnotherProbeAfterCanceledProbe(t *testing.
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled probe error = %v, want context.Canceled", err)
 	}
-	if transport.state != circuitOpen {
-		t.Errorf("state after canceled probe = %d, want circuitOpen", transport.state)
+	if transport.state != CircuitStateOpen {
+		t.Errorf("state after canceled probe = %d, want CircuitStateOpen", transport.state)
 	}
 	if transport.openedAt != openedAt {
 		t.Errorf("openedAt after canceled probe = %s, want unchanged %s", transport.openedAt, openedAt)
@@ -752,8 +880,8 @@ func TestCircuitBreakerRoundTripAllowsAnotherProbeAfterCanceledProbe(t *testing.
 	if response != wantResponse {
 		t.Errorf("replacement probe response = %p, want %p", response, wantResponse)
 	}
-	if transport.state != circuitClosed {
-		t.Errorf("state after successful probe = %d, want circuitClosed", transport.state)
+	if transport.state != CircuitStateClosed {
+		t.Errorf("state after successful probe = %d, want CircuitStateClosed", transport.state)
 	}
 	if transport.generation != 6 {
 		t.Errorf("generation = %d, want 6", transport.generation)
