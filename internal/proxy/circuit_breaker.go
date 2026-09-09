@@ -7,13 +7,43 @@ import (
 	"time"
 )
 
-type circuitState int
+// CircuitState represents the current operating state of a circuit breaker.
+type CircuitState int
 
 const (
-	circuitClosed circuitState = iota
-	circuitOpen
-	circuitHalfOpen
+	// CircuitStateClosed allows requests to reach the upstream.
+	CircuitStateClosed CircuitState = iota
+	// CircuitStateOpen rejects requests until the open timeout expires.
+	CircuitStateOpen
+	// CircuitStateHalfOpen allows one probe request to test the upstream.
+	CircuitStateHalfOpen
 )
+
+// String returns the stable name of the circuit state used by observability
+// integrations.
+func (s CircuitState) String() string {
+	switch s {
+	case CircuitStateClosed:
+		return "closed"
+	case CircuitStateOpen:
+		return "open"
+	case CircuitStateHalfOpen:
+		return "half_open"
+	default:
+		return "unknown"
+	}
+}
+
+// CircuitBreakerObserver records externally observable circuit breaker events.
+// Implementations must be safe for concurrent use. RecordStateTransition must
+// return promptly and must not call back into the transport because transitions
+// are reported while the transport's state lock is held.
+type CircuitBreakerObserver interface {
+	// RecordRejectedRequest records a request rejected before reaching the upstream.
+	RecordRejectedRequest()
+	// RecordStateTransition records a completed transition from one state to another.
+	RecordStateTransition(from, to CircuitState)
+}
 
 type circuitOutcome int
 
@@ -34,11 +64,12 @@ type CircuitBreakerTransport struct {
 	failureThreshold int
 	openTimeout      time.Duration
 	now              func() time.Time
+	observer         CircuitBreakerObserver
 
 	// mu guards generation, state, consecutiveFailures, and openedAt.
 	mu                  sync.Mutex
 	generation          uint64
-	state               circuitState
+	state               CircuitState
 	consecutiveFailures int
 	openedAt            time.Time
 }
@@ -56,6 +87,7 @@ func NewCircuitBreakerTransport(
 	base http.RoundTripper,
 	failureThreshold int,
 	openTimeout time.Duration,
+	observer CircuitBreakerObserver,
 ) (*CircuitBreakerTransport, error) {
 	if base == nil {
 		return nil, errors.New("base transport must not be nil")
@@ -66,11 +98,15 @@ func NewCircuitBreakerTransport(
 	if openTimeout <= 0 {
 		return nil, errors.New("circuit open timeout must be positive")
 	}
+	if observer == nil {
+		return nil, errors.New("observer must not be nil")
+	}
 	return &CircuitBreakerTransport{
 		base:             base,
 		failureThreshold: failureThreshold,
 		openTimeout:      openTimeout,
 		now:              time.Now,
+		observer:         observer,
 	}, nil
 }
 
@@ -79,6 +115,7 @@ func NewCircuitBreakerTransport(
 func (t *CircuitBreakerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	permit, err := t.acquirePermit()
 	if err != nil {
+		t.observer.RecordRejectedRequest()
 		return nil, err
 	}
 
@@ -89,21 +126,30 @@ func (t *CircuitBreakerTransport) RoundTrip(req *http.Request) (*http.Response, 
 	return resp, err
 }
 
+func (t *CircuitBreakerTransport) transitionToLocked(to CircuitState) {
+	from := t.state
+	if from == to {
+		return
+	}
+	t.state = to
+	t.observer.RecordStateTransition(from, to)
+}
+
 func (t *CircuitBreakerTransport) acquirePermit() (circuitPermit, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	switch t.state {
-	case circuitClosed:
+	case CircuitStateClosed:
 		return circuitPermit{generation: t.generation, probe: false}, nil
-	case circuitOpen:
+	case CircuitStateOpen:
 		now := t.now()
 		if now.Sub(t.openedAt) < t.openTimeout {
 			return circuitPermit{}, ErrCircuitOpen
 		}
-		t.state = circuitHalfOpen
+		t.transitionToLocked(CircuitStateHalfOpen)
 		return circuitPermit{generation: t.generation, probe: true}, nil
-	case circuitHalfOpen:
+	case CircuitStateHalfOpen:
 		return circuitPermit{}, ErrCircuitOpen
 	default:
 		return circuitPermit{}, ErrCircuitOpen
@@ -119,19 +165,19 @@ func (t *CircuitBreakerTransport) recordOutcome(p circuitPermit, outcome circuit
 	}
 
 	if p.probe {
-		if t.state != circuitHalfOpen {
+		if t.state != CircuitStateHalfOpen {
 			return
 		}
 
 		switch outcome {
 		case circuitOutcomeSuccess:
-			t.state = circuitClosed
+			t.transitionToLocked(CircuitStateClosed)
 			t.openedAt = time.Time{}
 		case circuitOutcomeFailure:
-			t.state = circuitOpen
+			t.transitionToLocked(CircuitStateOpen)
 			t.openedAt = t.now()
 		case circuitOutcomeIgnored:
-			t.state = circuitOpen
+			t.transitionToLocked(CircuitStateOpen)
 		default:
 			return
 		}
@@ -141,7 +187,7 @@ func (t *CircuitBreakerTransport) recordOutcome(p circuitPermit, outcome circuit
 		return
 	}
 
-	if t.state != circuitClosed {
+	if t.state != CircuitStateClosed {
 		return
 	}
 
@@ -152,7 +198,7 @@ func (t *CircuitBreakerTransport) recordOutcome(p circuitPermit, outcome circuit
 		t.consecutiveFailures++
 
 		if t.consecutiveFailures >= t.failureThreshold {
-			t.state = circuitOpen
+			t.transitionToLocked(CircuitStateOpen)
 			t.openedAt = t.now()
 			t.consecutiveFailures = 0
 			t.generation++

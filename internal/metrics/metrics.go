@@ -18,15 +18,15 @@ const (
 
 // HTTP is a metrics collector for HTTP requests.
 type HTTP struct {
-	registry         *prometheus.Registry
 	requestsTotal    *prometheus.CounterVec
 	requestDuration  *prometheus.HistogramVec
 	requestsInFlight prometheus.Gauge
 }
 
-// NewHTTP creates a new HTTP metrics collector.
-func NewHTTP() *HTTP {
-	registry := prometheus.NewRegistry()
+// NewHTTP creates HTTP metrics and registers their collectors with registerer.
+// It panics if registration fails, for example if the collectors are already
+// registered with the same registry.
+func NewHTTP(registerer prometheus.Registerer) *HTTP {
 	counterOpts := prometheus.CounterOpts{
 		Namespace: namespace,
 		Subsystem: subsystem,
@@ -49,10 +49,9 @@ func NewHTTP() *HTTP {
 	histogramCollector := prometheus.NewHistogramVec(histogramVecOpts, []string{"route"})
 	gaugeCollector := prometheus.NewGauge(gaugeOpts)
 
-	registry.MustRegister(counterCollector, histogramCollector, gaugeCollector)
+	registerer.MustRegister(counterCollector, histogramCollector, gaugeCollector)
 
 	return &HTTP{
-		registry:         registry,
 		requestsTotal:    counterCollector,
 		requestDuration:  histogramCollector,
 		requestsInFlight: gaugeCollector,
