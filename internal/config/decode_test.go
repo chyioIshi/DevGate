@@ -1,7 +1,7 @@
 package config
 
 import (
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -13,6 +13,9 @@ routes:
     protocol: http
     path_prefix: /api/users
     upstream_url: http://users-service:8080
+    rate_limit:
+      requests_per_second: 10.5
+      burst: 20
   - name: fallback
     protocol: http
     path_prefix: /
@@ -24,6 +27,10 @@ routes:
 			Protocol:    "http",
 			PathPrefix:  "/api/users",
 			UpstreamURL: "http://users-service:8080",
+			RateLimit: &RateLimitConfig{
+				RequestsPerSecond: 10.5,
+				Burst:             20,
+			},
 		},
 		{
 			Name:        "fallback",
@@ -38,8 +45,33 @@ routes:
 		t.Fatalf("decodeConfig() error = %v", err)
 	}
 
-	if !slices.Equal(got.Routes, want) {
+	if !reflect.DeepEqual(got.Routes, want) {
 		t.Errorf("decodeConfig().Routes = %+v, want %+v", got.Routes, want)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownRateLimitField(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+    rate_limit:
+      requests_per_second: 10
+      burst: 20
+      unknown_field: value
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want unknown field error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
 	}
 }
 

@@ -205,6 +205,109 @@ func TestHandlersFromRoutesReturnsCircuitBreakerConfigurationError(t *testing.T)
 	}
 }
 
+func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:        "users",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api/users",
+			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			RateLimit: &router.RateLimitPolicy{
+				RequestsPerSecond: 0,
+				Burst:             1,
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		discardLogger(),
+	)
+	if err == nil {
+		t.Fatal("handlersFromRoutes() error = nil, want rate limiter configuration error")
+	}
+	if handlers != nil {
+		t.Errorf("handlersFromRoutes() handlers = %+v, want nil", handlers)
+	}
+	if !strings.Contains(err.Error(), "users") {
+		t.Errorf("handlersFromRoutes() error = %q, want route name", err)
+	}
+	if !strings.Contains(err.Error(), "rate limiter") {
+		t.Errorf("handlersFromRoutes() error = %q, want rate limiter context", err)
+	}
+}
+
+func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
+	transport := &countingRoundTripper{}
+	routes := []router.Route{
+		{
+			Name:        "users",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api/users",
+			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			RateLimit: &router.RateLimitPolicy{
+				RequestsPerSecond: 1e-9,
+				Burst:             2,
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		transport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	handler := handlers["users"]
+	for requestNumber := 1; requestNumber <= 3; requestNumber++ {
+		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/api/users", nil)
+		response := httptest.NewRecorder()
+
+		handler.ServeHTTP(response, request)
+
+		wantStatus := http.StatusNoContent
+		if requestNumber == 3 {
+			wantStatus = http.StatusTooManyRequests
+		}
+		if response.Code != wantStatus {
+			t.Errorf(
+				"request %d status code = %d, want %d",
+				requestNumber,
+				response.Code,
+				wantStatus,
+			)
+		}
+	}
+
+	if transport.calls != 2 {
+		t.Errorf("upstream RoundTrip() calls = %d, want 2", transport.calls)
+	}
+}
+
+type countingRoundTripper struct {
+	calls int
+}
+
+func (t *countingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.calls++
+	return &http.Response{
+		StatusCode: http.StatusNoContent,
+		Header:     make(http.Header),
+		Body:       http.NoBody,
+		Request:    request,
+	}, nil
+}
+
 func mustParseRouteURL(t *testing.T, rawURL string) *url.URL {
 	t.Helper()
 

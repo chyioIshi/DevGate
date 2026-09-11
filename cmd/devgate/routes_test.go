@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -17,6 +18,10 @@ func TestRoutesFromConfig(t *testing.T) {
 			Protocol:    "http",
 			PathPrefix:  "/api/users",
 			UpstreamURL: "http://users-service:8080",
+			RateLimit: &config.RateLimitConfig{
+				RequestsPerSecond: 12.5,
+				Burst:             25,
+			},
 		},
 		{
 			Name:        "greeter",
@@ -30,12 +35,17 @@ func TestRoutesFromConfig(t *testing.T) {
 		protocol    router.Protocol
 		pathPrefix  string
 		upstreamURL string
+		rateLimit   *router.RateLimitPolicy
 	}{
 		{
 			name:        "users",
 			protocol:    router.ProtocolHTTP,
 			pathPrefix:  "/api/users",
 			upstreamURL: "http://users-service:8080",
+			rateLimit: &router.RateLimitPolicy{
+				RequestsPerSecond: 12.5,
+				Burst:             25,
+			},
 		},
 		{
 			name:        "greeter",
@@ -74,6 +84,9 @@ func TestRoutesFromConfig(t *testing.T) {
 				got[i].UpstreamURL,
 				want[i].upstreamURL,
 			)
+		}
+		if !reflect.DeepEqual(got[i].RateLimit, want[i].rateLimit) {
+			t.Errorf("route[%d].RateLimit = %+v, want %+v", i, got[i].RateLimit, want[i].rateLimit)
 		}
 	}
 }
