@@ -15,11 +15,19 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 		if err != nil {
 			return nil, fmt.Errorf("parse upstream URL for route %q: %w", routeConfig.Name, err)
 		}
+		var rateLimit *router.RateLimitPolicy
+		if routeConfig.RateLimit != nil {
+			rateLimit = &router.RateLimitPolicy{
+				RequestsPerSecond: routeConfig.RateLimit.RequestsPerSecond,
+				Burst:             routeConfig.RateLimit.Burst,
+			}
+		}
 		route := router.Route{
 			Name:        routeConfig.Name,
 			Protocol:    router.Protocol(routeConfig.Protocol),
 			PathPrefix:  routeConfig.PathPrefix,
 			UpstreamURL: upstreamURL,
+			RateLimit:   rateLimit,
 		}
 		routes = append(routes, route)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
+	"github.com/chyioishi/devgate/internal/ratelimit"
 	"github.com/chyioishi/devgate/internal/router"
 )
 
@@ -34,7 +35,22 @@ func handlersFromRoutes(
 			if err != nil {
 				return nil, fmt.Errorf("create circuit breaker transport for route %q: %w", route.Name, err)
 			}
-			handlers[route.Name] = proxy.New(route.UpstreamURL, circuitBreakerTransport, logger)
+
+			var routeHandler http.Handler = proxy.New(route.UpstreamURL, circuitBreakerTransport, logger)
+			if route.RateLimit != nil {
+				limiter, err := ratelimit.NewLocal(
+					route.RateLimit.RequestsPerSecond,
+					route.RateLimit.Burst,
+				)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"create rate limiter for route %q: %w", route.Name, err,
+					)
+				}
+				routeHandler = ratelimit.Middleware(routeHandler, limiter)
+			}
+			handlers[route.Name] = routeHandler
+
 		case router.ProtocolGRPC:
 			return nil, fmt.Errorf(
 				"create handler for route %q: gRPC protocol is not supported yet",

@@ -14,4 +14,11 @@ type Route struct {
 	Protocol    Protocol
 	PathPrefix  string
 	UpstreamURL *url.URL
+	RateLimit   *RateLimitPolicy
+}
+
+// RateLimitPolicy defines the local token-bucket settings for a route.
+type RateLimitPolicy struct {
+	RequestsPerSecond float64
+	Burst             int
 }
