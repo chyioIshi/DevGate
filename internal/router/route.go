@@ -16,11 +16,12 @@ const (
 )
 
 type Route struct {
-	Name        string
-	Protocol    Protocol
-	PathPrefix  string
-	UpstreamURL *url.URL
-	RateLimit   *RateLimitPolicy
+	Name            string
+	Protocol        Protocol
+	PathPrefix      string
+	UpstreamURL     *url.URL
+	RateLimit       *RateLimitPolicy
+	StripPathPrefix bool
 }
 
 // RateLimitPolicy defines the local token-bucket settings for a route.

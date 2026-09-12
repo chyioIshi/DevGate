@@ -23,11 +23,12 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			}
 		}
 		route := router.Route{
-			Name:        routeConfig.Name,
-			Protocol:    router.Protocol(routeConfig.Protocol),
-			PathPrefix:  routeConfig.PathPrefix,
-			UpstreamURL: upstreamURL,
-			RateLimit:   rateLimit,
+			Name:            routeConfig.Name,
+			Protocol:        router.Protocol(routeConfig.Protocol),
+			PathPrefix:      routeConfig.PathPrefix,
+			UpstreamURL:     upstreamURL,
+			RateLimit:       rateLimit,
+			StripPathPrefix: routeConfig.StripPathPrefix,
 		}
 		routes = append(routes, route)
 	}
