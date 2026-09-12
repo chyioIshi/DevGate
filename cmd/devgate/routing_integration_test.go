@@ -63,6 +63,7 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
 		discardLogger(),
 	)
 	if err != nil {
@@ -140,6 +141,7 @@ func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
 		logger,
 	)
 	if err != nil {

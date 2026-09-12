@@ -15,6 +15,7 @@ import (
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/router"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 const (
@@ -45,6 +46,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
 		discardLogger(),
 	)
 	if err != nil {
@@ -128,6 +130,7 @@ func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
 		discardLogger(),
 	)
 	if err == nil {
@@ -160,6 +163,7 @@ func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
 		discardLogger(),
 	)
 	if err == nil {
@@ -189,6 +193,7 @@ func TestHandlersFromRoutesReturnsCircuitBreakerConfigurationError(t *testing.T)
 		0,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
 		discardLogger(),
 	)
 	if err == nil {
@@ -225,6 +230,7 @@ func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
 		discardLogger(),
 	)
 	if err == nil {
@@ -243,6 +249,7 @@ func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
 
 func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
 	transport := &countingRoundTripper{}
+	registry := prometheus.NewRegistry()
 	routes := []router.Route{
 		{
 			Name:        "users",
@@ -261,7 +268,8 @@ func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
 		transport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
-		newTestCircuitBreakerMetrics(),
+		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
 		discardLogger(),
 	)
 	if err != nil {
@@ -291,6 +299,20 @@ func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
 
 	if transport.calls != 2 {
 		t.Errorf("upstream RoundTrip() calls = %d, want 2", transport.calls)
+	}
+
+	const want = `
+# HELP devgate_rate_limiter_requests_total Total number of HTTP requests handled by the rate limiter.
+# TYPE devgate_rate_limiter_requests_total counter
+devgate_rate_limiter_requests_total{outcome="allowed",route="users"} 2
+devgate_rate_limiter_requests_total{outcome="rejected",route="users"} 1
+`
+	if err := testutil.GatherAndCompare(
+		registry,
+		strings.NewReader(want),
+		"devgate_rate_limiter_requests_total",
+	); err != nil {
+		t.Errorf("rate limiter metrics mismatch: %v", err)
 	}
 }
 
@@ -325,4 +347,8 @@ func discardLogger() *slog.Logger {
 
 func newTestCircuitBreakerMetrics() *metrics.CircuitBreaker {
 	return metrics.NewCircuitBreaker(prometheus.NewRegistry())
+}
+
+func newTestRateLimiterMetrics() *metrics.RateLimiter {
+	return metrics.NewRateLimiter(prometheus.NewRegistry())
 }

@@ -12,10 +12,24 @@ func (f limiterFunc) Allow() bool {
 	return f()
 }
 
+type recordingObserver struct {
+	allowed  int
+	rejected int
+}
+
+func (o *recordingObserver) RecordAllowedRequest() {
+	o.allowed++
+}
+
+func (o *recordingObserver) RecordRejectedRequest() {
+	o.rejected++
+}
+
 func TestMiddlewareDelegatesAllowedRequest(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/users", nil)
 	var limiterCalls int
 	var receivedRequest *http.Request
+	observer := &recordingObserver{}
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedRequest = r
 		w.WriteHeader(http.StatusNoContent)
@@ -23,7 +37,7 @@ func TestMiddlewareDelegatesAllowedRequest(t *testing.T) {
 	handler := Middleware(next, limiterFunc(func() bool {
 		limiterCalls++
 		return true
-	}))
+	}), observer)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -34,6 +48,12 @@ func TestMiddlewareDelegatesAllowedRequest(t *testing.T) {
 	if receivedRequest != request {
 		t.Errorf("downstream request = %p, want original request %p", receivedRequest, request)
 	}
+	if observer.allowed != 1 {
+		t.Errorf("allowed observations = %d, want 1", observer.allowed)
+	}
+	if observer.rejected != 0 {
+		t.Errorf("rejected observations = %d, want 0", observer.rejected)
+	}
 	if recorder.Code != http.StatusNoContent {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusNoContent)
 	}
@@ -42,13 +62,14 @@ func TestMiddlewareDelegatesAllowedRequest(t *testing.T) {
 func TestMiddlewareRejectsRequestWithoutCallingNext(t *testing.T) {
 	var limiterCalls int
 	var nextCalled bool
+	observer := &recordingObserver{}
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		nextCalled = true
 	})
 	handler := Middleware(next, limiterFunc(func() bool {
 		limiterCalls++
 		return false
-	}))
+	}), observer)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/users", nil)
 
@@ -59,6 +80,12 @@ func TestMiddlewareRejectsRequestWithoutCallingNext(t *testing.T) {
 	}
 	if nextCalled {
 		t.Error("downstream handler was called for rejected request")
+	}
+	if observer.allowed != 0 {
+		t.Errorf("allowed observations = %d, want 0", observer.allowed)
+	}
+	if observer.rejected != 1 {
+		t.Errorf("rejected observations = %d, want 1", observer.rejected)
 	}
 	if recorder.Code != http.StatusTooManyRequests {
 		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusTooManyRequests)
