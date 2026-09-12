@@ -1,6 +1,7 @@
 package router
 
 import (
+	"math"
 	"net/url"
 	"strings"
 	"testing"
@@ -241,6 +242,115 @@ func TestNewCopiesRoutes(t *testing.T) {
 	}
 	if got.routes[0] != want {
 		t.Errorf("New() copied route = %+v, want %+v", got.routes[0], want)
+	}
+}
+
+func TestNewValidatesRateLimitPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		policy      RateLimitPolicy
+		wantMessage string
+	}{
+		{
+			name: "valid policy",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: 10.5,
+				Burst:             20,
+			},
+		},
+		{
+			name: "zero requests per second",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: 0,
+				Burst:             1,
+			},
+			wantMessage: "requests per second must be positive",
+		},
+		{
+			name: "negative requests per second",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: -1,
+				Burst:             1,
+			},
+			wantMessage: "requests per second must be positive",
+		},
+		{
+			name: "NaN requests per second",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: math.NaN(),
+				Burst:             1,
+			},
+			wantMessage: "requests per second must be finite",
+		},
+		{
+			name: "positive infinity requests per second",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: math.Inf(1),
+				Burst:             1,
+			},
+			wantMessage: "requests per second must be finite",
+		},
+		{
+			name: "negative infinity requests per second",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: math.Inf(-1),
+				Burst:             1,
+			},
+			wantMessage: "requests per second must be finite",
+		},
+		{
+			name: "zero burst",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: 1,
+				Burst:             0,
+			},
+			wantMessage: "burst must be positive",
+		},
+		{
+			name: "negative burst",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: 1,
+				Burst:             -1,
+			},
+			wantMessage: "burst must be positive",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					RateLimit:   &test.policy,
+				},
+			}
+
+			got, err := New(routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			for _, context := range []string{"users", "rate limit policy", test.wantMessage} {
+				if !strings.Contains(err.Error(), context) {
+					t.Errorf("New() error = %q, want context %q", err, context)
+				}
+			}
+		})
 	}
 }
 
