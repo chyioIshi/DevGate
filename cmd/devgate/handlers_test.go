@@ -247,6 +247,100 @@ func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesStripsPathPrefix(t *testing.T) {
+	tests := []struct {
+		name            string
+		pathPrefix      string
+		stripPathPrefix bool
+		requestTarget   string
+		wantEscapedPath string
+		wantRawQuery    string
+	}{
+		{
+			name:            "stripping disabled",
+			pathPrefix:      "/api/users",
+			requestTarget:   "http://gateway.local/api/users/42?id=1",
+			wantEscapedPath: "/internal/api/users/42",
+			wantRawQuery:    "id=1",
+		},
+		{
+			name:            "nested escaped path",
+			pathPrefix:      "/api/users",
+			stripPathPrefix: true,
+			requestTarget:   "http://gateway.local/api/users/a%2Fb?id=1",
+			wantEscapedPath: "/internal/a%2Fb",
+			wantRawQuery:    "id=1",
+		},
+		{
+			name:            "exact prefix",
+			pathPrefix:      "/api/users",
+			stripPathPrefix: true,
+			requestTarget:   "http://gateway.local/api/users",
+			wantEscapedPath: "/internal/",
+		},
+		{
+			name:            "root prefix is unchanged",
+			pathPrefix:      "/",
+			stripPathPrefix: true,
+			requestTarget:   "http://gateway.local/orders/42",
+			wantEscapedPath: "/internal/orders/42",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &recordingURLRoundTripper{}
+			routes := []router.Route{
+				{
+					Name:            "users",
+					Protocol:        router.ProtocolHTTP,
+					PathPrefix:      test.pathPrefix,
+					UpstreamURL:     mustParseRouteURL(t, "http://users-service:8080/internal"),
+					StripPathPrefix: test.stripPathPrefix,
+				},
+			}
+
+			handlers, err := handlersFromRoutes(
+				routes,
+				transport,
+				testCircuitFailureThreshold,
+				testCircuitOpenTimeout,
+				newTestCircuitBreakerMetrics(),
+				newTestRateLimiterMetrics(),
+				discardLogger(),
+			)
+			if err != nil {
+				t.Fatalf("handlersFromRoutes() error = %v", err)
+			}
+
+			request := httptest.NewRequest(http.MethodGet, test.requestTarget, nil)
+			response := httptest.NewRecorder()
+			handlers["users"].ServeHTTP(response, request)
+
+			if response.Code != http.StatusNoContent {
+				t.Errorf("status code = %d, want %d", response.Code, http.StatusNoContent)
+			}
+			if transport.calls != 1 {
+				t.Errorf("upstream RoundTrip() calls = %d, want 1", transport.calls)
+			}
+			if transport.escapedPath != test.wantEscapedPath {
+				t.Errorf(
+					"upstream escaped path = %q, want %q",
+					transport.escapedPath,
+					test.wantEscapedPath,
+				)
+			}
+			if transport.rawQuery != test.wantRawQuery {
+				t.Errorf(
+					"upstream raw query = %q, want %q",
+					transport.rawQuery,
+					test.wantRawQuery,
+				)
+			}
+		})
+	}
+}
+
 func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
 	transport := &countingRoundTripper{}
 	registry := prometheus.NewRegistry()
@@ -322,6 +416,24 @@ type countingRoundTripper struct {
 
 func (t *countingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.calls++
+	return &http.Response{
+		StatusCode: http.StatusNoContent,
+		Header:     make(http.Header),
+		Body:       http.NoBody,
+		Request:    request,
+	}, nil
+}
+
+type recordingURLRoundTripper struct {
+	calls       int
+	escapedPath string
+	rawQuery    string
+}
+
+func (t *recordingURLRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.calls++
+	t.escapedPath = request.URL.EscapedPath()
+	t.rawQuery = request.URL.RawQuery
 	return &http.Response{
 		StatusCode: http.StatusNoContent,
 		Header:     make(http.Header),

@@ -14,10 +14,11 @@ import (
 func TestRoutesFromConfig(t *testing.T) {
 	routeConfigs := []config.RouteConfig{
 		{
-			Name:        "users",
-			Protocol:    "http",
-			PathPrefix:  "/api/users",
-			UpstreamURL: "http://users-service:8080",
+			Name:            "users",
+			Protocol:        "http",
+			PathPrefix:      "/api/users",
+			UpstreamURL:     "http://users-service:8080",
+			StripPathPrefix: true,
 			RateLimit: &config.RateLimitConfig{
 				RequestsPerSecond: 12.5,
 				Burst:             25,
@@ -36,6 +37,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		pathPrefix  string
 		upstreamURL string
 		rateLimit   *router.RateLimitPolicy
+		stripPrefix bool
 	}{
 		{
 			name:        "users",
@@ -46,6 +48,7 @@ func TestRoutesFromConfig(t *testing.T) {
 				RequestsPerSecond: 12.5,
 				Burst:             25,
 			},
+			stripPrefix: true,
 		},
 		{
 			name:        "greeter",
@@ -87,6 +90,14 @@ func TestRoutesFromConfig(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got[i].RateLimit, want[i].rateLimit) {
 			t.Errorf("route[%d].RateLimit = %+v, want %+v", i, got[i].RateLimit, want[i].rateLimit)
+		}
+		if got[i].StripPathPrefix != want[i].stripPrefix {
+			t.Errorf(
+				"route[%d].StripPathPrefix = %t, want %t",
+				i,
+				got[i].StripPathPrefix,
+				want[i].stripPrefix,
+			)
 		}
 	}
 }

@@ -41,10 +41,11 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 			UpstreamURL: fallbackUpstream.URL,
 		},
 		{
-			Name:        "users",
-			Protocol:    "http",
-			PathPrefix:  "/api/users",
-			UpstreamURL: usersUpstream.URL,
+			Name:            "users",
+			Protocol:        "http",
+			PathPrefix:      "/api/users",
+			UpstreamURL:     usersUpstream.URL,
+			StripPathPrefix: true,
 		},
 	}
 
@@ -81,7 +82,7 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 			name:       "specific users route",
 			target:     "/api/users/42?id=1",
 			wantStatus: http.StatusCreated,
-			wantBody:   "users:/api/users/42?id=1",
+			wantBody:   "users:/42?id=1",
 		},
 		{
 			name:       "fallback route",
