@@ -38,6 +38,11 @@ func handlersFromRoutes(
 			}
 
 			var routeHandler http.Handler = proxy.New(route.UpstreamURL, circuitBreakerTransport, logger)
+
+			if route.PathPrefix != "/" && route.StripPathPrefix {
+				routeHandler = http.StripPrefix(route.PathPrefix, routeHandler)
+			}
+
 			if route.RateLimit != nil {
 				limiter, err := ratelimit.NewLocal(
 					route.RateLimit.RequestsPerSecond,

@@ -2,11 +2,12 @@ package config
 
 // RouteConfig describes one gateway route loaded from the configuration file.
 type RouteConfig struct {
-	Name        string           `yaml:"name"`
-	Protocol    string           `yaml:"protocol"`
-	PathPrefix  string           `yaml:"path_prefix"`
-	UpstreamURL string           `yaml:"upstream_url"`
-	RateLimit   *RateLimitConfig `yaml:"rate_limit"`
+	Name            string           `yaml:"name"`
+	Protocol        string           `yaml:"protocol"`
+	PathPrefix      string           `yaml:"path_prefix"`
+	UpstreamURL     string           `yaml:"upstream_url"`
+	RateLimit       *RateLimitConfig `yaml:"rate_limit"`
+	StripPathPrefix bool             `yaml:"strip_path_prefix"`
 }
 
 // RateLimitConfig configures a local token-bucket rate limiter for a route.

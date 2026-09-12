@@ -13,6 +13,7 @@ routes:
     protocol: http
     path_prefix: /api/users
     upstream_url: http://users-service:8080
+    strip_path_prefix: true
     rate_limit:
       requests_per_second: 10.5
       burst: 20
@@ -23,10 +24,11 @@ routes:
 `
 	want := []RouteConfig{
 		{
-			Name:        "users",
-			Protocol:    "http",
-			PathPrefix:  "/api/users",
-			UpstreamURL: "http://users-service:8080",
+			Name:            "users",
+			Protocol:        "http",
+			PathPrefix:      "/api/users",
+			UpstreamURL:     "http://users-service:8080",
+			StripPathPrefix: true,
 			RateLimit: &RateLimitConfig{
 				RequestsPerSecond: 10.5,
 				Burst:             20,
