@@ -18,6 +18,7 @@ func handlersFromRoutes(
 	circuitFailureThreshold int,
 	circuitOpenTimeout time.Duration,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
+	rateLimiterMetrics *metrics.RateLimiter,
 	logger *slog.Logger,
 ) (map[string]http.Handler, error) {
 	handlers := make(map[string]http.Handler, len(routes))
@@ -47,7 +48,8 @@ func handlersFromRoutes(
 						"create rate limiter for route %q: %w", route.Name, err,
 					)
 				}
-				routeHandler = ratelimit.Middleware(routeHandler, limiter)
+				limiterMetrics := rateLimiterMetrics.ForRoute(route.Name)
+				routeHandler = ratelimit.Middleware(routeHandler, limiter, limiterMetrics)
 			}
 			handlers[route.Name] = routeHandler
 

@@ -62,6 +62,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	promRegistry := prometheus.NewRegistry()
 	circuitBreakerMetrics := metrics.NewCircuitBreaker(promRegistry)
+	rateLimiterMetrics := metrics.NewRateLimiter(promRegistry)
 	httpMetrics := metrics.NewHTTP(promRegistry)
 
 	routeHandlers, err := handlersFromRoutes(
@@ -70,6 +71,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		cfg.UpstreamCircuitFailureThreshold,
 		cfg.UpstreamCircuitOpenTimeout,
 		circuitBreakerMetrics,
+		rateLimiterMetrics,
 		logger,
 	)
 	if err != nil {
