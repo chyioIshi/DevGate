@@ -29,6 +29,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			UpstreamURL:     upstreamURL,
 			RateLimit:       rateLimit,
 			StripPathPrefix: routeConfig.StripPathPrefix,
+			RequestTimeout:  routeConfig.RequestTimeout,
 		}
 		routes = append(routes, route)
 	}
