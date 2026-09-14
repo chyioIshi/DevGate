@@ -9,6 +9,7 @@ import (
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/ratelimit"
+	"github.com/chyioishi/devgate/internal/requesttimeout"
 	"github.com/chyioishi/devgate/internal/router"
 )
 
@@ -41,6 +42,17 @@ func handlersFromRoutes(
 
 			if route.PathPrefix != "/" && route.StripPathPrefix {
 				routeHandler = http.StripPrefix(route.PathPrefix, routeHandler)
+			}
+
+			if route.RequestTimeout != 0 {
+				routeHandler, err = requesttimeout.New(routeHandler, route.RequestTimeout)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"create request timeout handler for route %q: %w",
+						route.Name,
+						err,
+					)
+				}
 			}
 
 			if route.RateLimit != nil {

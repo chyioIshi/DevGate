@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/router"
@@ -19,6 +20,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			PathPrefix:      "/api/users",
 			UpstreamURL:     "http://users-service:8080",
 			StripPathPrefix: true,
+			RequestTimeout:  2500 * time.Millisecond,
 			RateLimit: &config.RateLimitConfig{
 				RequestsPerSecond: 12.5,
 				Burst:             25,
@@ -32,12 +34,13 @@ func TestRoutesFromConfig(t *testing.T) {
 		},
 	}
 	want := []struct {
-		name        string
-		protocol    router.Protocol
-		pathPrefix  string
-		upstreamURL string
-		rateLimit   *router.RateLimitPolicy
-		stripPrefix bool
+		name           string
+		protocol       router.Protocol
+		pathPrefix     string
+		upstreamURL    string
+		rateLimit      *router.RateLimitPolicy
+		stripPrefix    bool
+		requestTimeout time.Duration
 	}{
 		{
 			name:        "users",
@@ -48,7 +51,8 @@ func TestRoutesFromConfig(t *testing.T) {
 				RequestsPerSecond: 12.5,
 				Burst:             25,
 			},
-			stripPrefix: true,
+			stripPrefix:    true,
+			requestTimeout: 2500 * time.Millisecond,
 		},
 		{
 			name:        "greeter",
@@ -97,6 +101,14 @@ func TestRoutesFromConfig(t *testing.T) {
 				i,
 				got[i].StripPathPrefix,
 				want[i].stripPrefix,
+			)
+		}
+		if got[i].RequestTimeout != want[i].requestTimeout {
+			t.Errorf(
+				"route[%d].RequestTimeout = %s, want %s",
+				i,
+				got[i].RequestTimeout,
+				want[i].requestTimeout,
 			)
 		}
 	}

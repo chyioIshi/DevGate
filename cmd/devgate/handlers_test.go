@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -410,8 +411,97 @@ devgate_rate_limiter_requests_total{outcome="rejected",route="users"} 1
 	}
 }
 
+func TestHandlersFromRoutesAppliesRequestTimeout(t *testing.T) {
+	transport := &contextBlockingRoundTripper{}
+	routes := []router.Route{
+		{
+			Name:           "users",
+			Protocol:       router.ProtocolHTTP,
+			PathPrefix:     "/api/users",
+			UpstreamURL:    mustParseRouteURL(t, "http://users-service:8080"),
+			RequestTimeout: 10 * time.Millisecond,
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		transport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/api/users", nil)
+	response := httptest.NewRecorder()
+	handlers["users"].ServeHTTP(response, request)
+
+	if response.Code != http.StatusGatewayTimeout {
+		t.Errorf("status code = %d, want %d", response.Code, http.StatusGatewayTimeout)
+	}
+	if transport.calls != 1 {
+		t.Errorf("upstream RoundTrip() calls = %d, want 1", transport.calls)
+	}
+}
+
+func TestHandlersFromRoutesRejectsNegativeRequestTimeout(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:           "users",
+			Protocol:       router.ProtocolHTTP,
+			PathPrefix:     "/api/users",
+			UpstreamURL:    mustParseRouteURL(t, "http://users-service:8080"),
+			RequestTimeout: -time.Nanosecond,
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		discardLogger(),
+	)
+	if err == nil {
+		t.Fatal("handlersFromRoutes() error = nil, want request timeout configuration error")
+	}
+	if handlers != nil {
+		t.Errorf("handlersFromRoutes() handlers = %+v, want nil", handlers)
+	}
+	if !strings.Contains(err.Error(), "users") {
+		t.Errorf("handlersFromRoutes() error = %q, want route name", err)
+	}
+	if !strings.Contains(err.Error(), "request timeout") {
+		t.Errorf("handlersFromRoutes() error = %q, want request timeout context", err)
+	}
+}
+
 type countingRoundTripper struct {
 	calls int
+}
+
+type contextBlockingRoundTripper struct {
+	calls int
+}
+
+func (t *contextBlockingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.calls++
+
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+
+	select {
+	case <-request.Context().Done():
+		return nil, request.Context().Err()
+	case <-timer.C:
+		return nil, errors.New("request context was not canceled")
+	}
 }
 
 func (t *countingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDecodeConfig(t *testing.T) {
@@ -14,6 +15,7 @@ routes:
     path_prefix: /api/users
     upstream_url: http://users-service:8080
     strip_path_prefix: true
+    request_timeout: 2.5s
     rate_limit:
       requests_per_second: 10.5
       burst: 20
@@ -29,6 +31,7 @@ routes:
 			PathPrefix:      "/api/users",
 			UpstreamURL:     "http://users-service:8080",
 			StripPathPrefix: true,
+			RequestTimeout:  2500 * time.Millisecond,
 			RateLimit: &RateLimitConfig{
 				RequestsPerSecond: 10.5,
 				Burst:             20,
@@ -49,6 +52,31 @@ routes:
 
 	if !reflect.DeepEqual(got.Routes, want) {
 		t.Errorf("decodeConfig().Routes = %+v, want %+v", got.Routes, want)
+	}
+}
+
+func TestDecodeConfigRejectsInvalidRequestTimeout(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+    request_timeout: fast
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want invalid duration error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "decode YAML config") {
+		t.Errorf("decodeConfig() error = %q, want decoding context", err)
+	}
+	if !strings.Contains(err.Error(), "invalid duration") {
+		t.Errorf("decodeConfig() error = %q, want invalid duration context", err)
 	}
 }
 

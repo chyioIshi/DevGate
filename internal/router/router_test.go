@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNew(t *testing.T) {
@@ -346,6 +347,65 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 				t.Errorf("New() router = %#v, want nil", got)
 			}
 			for _, context := range []string{"users", "rate limit policy", test.wantMessage} {
+				if !strings.Contains(err.Error(), context) {
+					t.Errorf("New() error = %q, want context %q", err, context)
+				}
+			}
+		})
+	}
+}
+
+func TestNewValidatesRequestTimeout(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     time.Duration
+		wantMessage string
+	}{
+		{
+			name:    "zero disables timeout",
+			timeout: 0,
+		},
+		{
+			name:    "positive timeout",
+			timeout: 2500 * time.Millisecond,
+		},
+		{
+			name:        "negative timeout",
+			timeout:     -time.Nanosecond,
+			wantMessage: "request timeout must not be negative",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []Route{
+				{
+					Name:           "users",
+					Protocol:       ProtocolHTTP,
+					PathPrefix:     "/users",
+					UpstreamURL:    mustParseURL(t, "http://users-service:8080"),
+					RequestTimeout: test.timeout,
+				},
+			}
+
+			got, err := New(routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			for _, context := range []string{"users", test.wantMessage} {
 				if !strings.Contains(err.Error(), context) {
 					t.Errorf("New() error = %q, want context %q", err, context)
 				}

@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type Protocol string
@@ -22,6 +23,7 @@ type Route struct {
 	UpstreamURL     *url.URL
 	RateLimit       *RateLimitPolicy
 	StripPathPrefix bool
+	RequestTimeout  time.Duration
 }
 
 // RateLimitPolicy defines the local token-bucket settings for a route.
@@ -58,6 +60,9 @@ func (r Route) validate() error {
 	}
 	if strings.TrimSpace(r.UpstreamURL.Host) == "" {
 		return errors.New("upstream URL host must not be empty")
+	}
+	if r.RequestTimeout < 0 {
+		return errors.New("request timeout must not be negative")
 	}
 	if r.RateLimit != nil {
 		if err := r.RateLimit.validate(); err != nil {
