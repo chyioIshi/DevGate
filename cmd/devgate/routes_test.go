@@ -15,12 +15,13 @@ import (
 func TestRoutesFromConfig(t *testing.T) {
 	routeConfigs := []config.RouteConfig{
 		{
-			Name:            "users",
-			Protocol:        "http",
-			PathPrefix:      "/api/users",
-			UpstreamURL:     "http://users-service:8080",
-			StripPathPrefix: true,
-			RequestTimeout:  2500 * time.Millisecond,
+			Name:                "users",
+			Protocol:            "http",
+			PathPrefix:          "/api/users",
+			UpstreamURL:         "http://users-service:8080",
+			StripPathPrefix:     true,
+			RequestTimeout:      2500 * time.Millisecond,
+			MaxRequestBodyBytes: 10 * 1024 * 1024,
 			RateLimit: &config.RateLimitConfig{
 				RequestsPerSecond: 12.5,
 				Burst:             25,
@@ -34,13 +35,14 @@ func TestRoutesFromConfig(t *testing.T) {
 		},
 	}
 	want := []struct {
-		name           string
-		protocol       router.Protocol
-		pathPrefix     string
-		upstreamURL    string
-		rateLimit      *router.RateLimitPolicy
-		stripPrefix    bool
-		requestTimeout time.Duration
+		name                string
+		protocol            router.Protocol
+		pathPrefix          string
+		upstreamURL         string
+		rateLimit           *router.RateLimitPolicy
+		stripPrefix         bool
+		requestTimeout      time.Duration
+		maxRequestBodyBytes int64
 	}{
 		{
 			name:        "users",
@@ -51,8 +53,9 @@ func TestRoutesFromConfig(t *testing.T) {
 				RequestsPerSecond: 12.5,
 				Burst:             25,
 			},
-			stripPrefix:    true,
-			requestTimeout: 2500 * time.Millisecond,
+			stripPrefix:         true,
+			requestTimeout:      2500 * time.Millisecond,
+			maxRequestBodyBytes: 10 * 1024 * 1024,
 		},
 		{
 			name:        "greeter",
@@ -109,6 +112,14 @@ func TestRoutesFromConfig(t *testing.T) {
 				i,
 				got[i].RequestTimeout,
 				want[i].requestTimeout,
+			)
+		}
+		if got[i].MaxRequestBodyBytes != want[i].maxRequestBodyBytes {
+			t.Errorf(
+				"route[%d].MaxRequestBodyBytes = %d, want %d",
+				i,
+				got[i].MaxRequestBodyBytes,
+				want[i].maxRequestBodyBytes,
 			)
 		}
 	}

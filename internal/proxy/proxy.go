@@ -48,9 +48,14 @@ type timeoutReporter interface {
 
 func statusCodeForProxyError(err error) int {
 	var reporter timeoutReporter
+	var maxBytesError *http.MaxBytesError
 
 	if errors.Is(err, ErrCircuitOpen) {
 		return http.StatusServiceUnavailable
+	}
+
+	if errors.As(err, &maxBytesError) {
+		return http.StatusRequestEntityTooLarge
 	}
 
 	if errors.As(err, &reporter) && reporter.Timeout() {

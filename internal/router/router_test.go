@@ -414,6 +414,64 @@ func TestNewValidatesRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestNewValidatesMaxRequestBodyBytes(t *testing.T) {
+	tests := []struct {
+		name        string
+		limit       int64
+		wantMessage string
+	}{
+		{
+			name: "zero disables limit",
+		},
+		{
+			name:  "positive limit",
+			limit: 10 * 1024 * 1024,
+		},
+		{
+			name:        "negative limit",
+			limit:       -1,
+			wantMessage: "max request body bytes must not be negative",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []Route{
+				{
+					Name:                "users",
+					Protocol:            ProtocolHTTP,
+					PathPrefix:          "/users",
+					UpstreamURL:         mustParseURL(t, "http://users-service:8080"),
+					MaxRequestBodyBytes: test.limit,
+				},
+			}
+
+			got, err := New(routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			for _, context := range []string{"users", test.wantMessage} {
+				if !strings.Contains(err.Error(), context) {
+					t.Errorf("New() error = %q, want context %q", err, context)
+				}
+			}
+		})
+	}
+}
+
 func TestRouterMatch(t *testing.T) {
 	routes := []Route{
 		{
