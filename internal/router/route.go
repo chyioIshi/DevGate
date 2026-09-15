@@ -17,13 +17,14 @@ const (
 )
 
 type Route struct {
-	Name            string
-	Protocol        Protocol
-	PathPrefix      string
-	UpstreamURL     *url.URL
-	RateLimit       *RateLimitPolicy
-	StripPathPrefix bool
-	RequestTimeout  time.Duration
+	Name                string
+	Protocol            Protocol
+	PathPrefix          string
+	UpstreamURL         *url.URL
+	RateLimit           *RateLimitPolicy
+	StripPathPrefix     bool
+	RequestTimeout      time.Duration
+	MaxRequestBodyBytes int64
 }
 
 // RateLimitPolicy defines the local token-bucket settings for a route.
@@ -63,6 +64,9 @@ func (r Route) validate() error {
 	}
 	if r.RequestTimeout < 0 {
 		return errors.New("request timeout must not be negative")
+	}
+	if r.MaxRequestBodyBytes < 0 {
+		return errors.New("max request body bytes must not be negative")
 	}
 	if r.RateLimit != nil {
 		if err := r.RateLimit.validate(); err != nil {

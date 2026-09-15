@@ -9,6 +9,7 @@ import (
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/ratelimit"
+	"github.com/chyioishi/devgate/internal/requestbodylimit"
 	"github.com/chyioishi/devgate/internal/requesttimeout"
 	"github.com/chyioishi/devgate/internal/router"
 )
@@ -42,6 +43,20 @@ func handlersFromRoutes(
 
 			if route.PathPrefix != "/" && route.StripPathPrefix {
 				routeHandler = http.StripPrefix(route.PathPrefix, routeHandler)
+			}
+
+			if route.MaxRequestBodyBytes != 0 {
+				routeHandler, err = requestbodylimit.New(
+					routeHandler,
+					route.MaxRequestBodyBytes,
+				)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"create request body limit for route %q: %w",
+						route.Name,
+						err,
+					)
+				}
 			}
 
 			if route.RequestTimeout != 0 {
