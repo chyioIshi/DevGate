@@ -86,6 +86,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Addr:              cfg.HTTPAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		IdleTimeout:       cfg.IdleTimeout,
 	}
 
