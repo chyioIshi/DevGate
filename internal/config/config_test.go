@@ -22,6 +22,7 @@ routes:
 const (
 	envHTTPAddr                        = "DEVGATE_HTTP_ADDR"
 	envReadHeaderTimeout               = "DEVGATE_READ_HEADER_TIMEOUT"
+	envMaxHeaderBytes                  = "DEVGATE_MAX_HEADER_BYTES"
 	envIdleTimeout                     = "DEVGATE_IDLE_TIMEOUT"
 	envShutdownTimeout                 = "DEVGATE_SHUTDOWN_TIMEOUT"
 	envUpstreamResponseHeaderTimeout   = "DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"
@@ -37,6 +38,7 @@ const (
 var configEnvKeys = []string{
 	envHTTPAddr,
 	envReadHeaderTimeout,
+	envMaxHeaderBytes,
 	envIdleTimeout,
 	envShutdownTimeout,
 	envUpstreamResponseHeaderTimeout,
@@ -64,6 +66,7 @@ func TestLoadDefaults(t *testing.T) {
 	want := Config{
 		HTTPAddr:                        ":8080",
 		ReadHeaderTimeout:               5 * time.Second,
+		MaxHeaderBytes:                  64 * 1024,
 		IdleTimeout:                     60 * time.Second,
 		ShutdownTimeout:                 10 * time.Second,
 		UpstreamResponseHeaderTimeout:   10 * time.Second,
@@ -85,6 +88,7 @@ func TestLoadOverrides(t *testing.T) {
 
 	t.Setenv(envHTTPAddr, "127.0.0.1:9090")
 	t.Setenv(envReadHeaderTimeout, "2s")
+	t.Setenv(envMaxHeaderBytes, "32768")
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
 	t.Setenv(envUpstreamResponseHeaderTimeout, "3s")
@@ -105,6 +109,7 @@ func TestLoadOverrides(t *testing.T) {
 	want := Config{
 		HTTPAddr:                        "127.0.0.1:9090",
 		ReadHeaderTimeout:               2 * time.Second,
+		MaxHeaderBytes:                  32 * 1024,
 		IdleTimeout:                     45 * time.Second,
 		ShutdownTimeout:                 7 * time.Second,
 		UpstreamResponseHeaderTimeout:   3 * time.Second,
@@ -281,6 +286,41 @@ func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonPositiveMaxHeaderBytes(t *testing.T) {
+	for _, value := range []string{"0", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(envMaxHeaderBytes, value)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want validation error")
+			}
+			assertZeroConfig(t, got)
+			if !strings.Contains(err.Error(), "validate config") {
+				t.Errorf("Load() error = %q, want validation context", err)
+			}
+			if !strings.Contains(err.Error(), "max request header bytes must be positive") {
+				t.Errorf("Load() error = %q, want max header bytes context", err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidMaxHeaderBytes(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv(envMaxHeaderBytes, "many")
+
+	got, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want parsing error")
+	}
+	assertZeroConfig(t, got)
+	if !strings.Contains(err.Error(), "parse environment") {
+		t.Errorf("Load() error = %q, want parsing context", err)
+	}
+}
+
 func TestLoadRejectsInvalidUpstreamMaxAttempts(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -404,6 +444,7 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 
 	if got.HTTPAddr != want.HTTPAddr ||
 		got.ReadHeaderTimeout != want.ReadHeaderTimeout ||
+		got.MaxHeaderBytes != want.MaxHeaderBytes ||
 		got.IdleTimeout != want.IdleTimeout ||
 		got.ShutdownTimeout != want.ShutdownTimeout ||
 		got.UpstreamResponseHeaderTimeout != want.UpstreamResponseHeaderTimeout ||
