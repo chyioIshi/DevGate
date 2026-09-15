@@ -2,7 +2,9 @@ package router
 
 import (
 	"math"
+	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -467,6 +469,234 @@ func TestNewValidatesMaxRequestBodyBytes(t *testing.T) {
 				if !strings.Contains(err.Error(), context) {
 					t.Errorf("New() error = %q, want context %q", err, context)
 				}
+			}
+		})
+	}
+}
+
+func TestNewValidatesRequestHeaderPolicy(t *testing.T) {
+	tests := []struct {
+		name             string
+		policy           *HeaderTransformPolicy
+		wantMessage      string
+		forbiddenMessage string
+	}{
+		{
+			name:   "empty policy",
+			policy: &HeaderTransformPolicy{},
+		},
+		{
+			name: "valid set and remove",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{
+					"X-Gateway":     "DevGate",
+					"X-Empty-Value": "",
+				},
+				Remove: []string{"X-Legacy-Header"},
+			},
+		},
+		{
+			name: "invalid set name",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{"Bad Header": "value"},
+			},
+			wantMessage: "invalid header name to set",
+		},
+		{
+			name: "invalid set value",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{"X-Gateway": "safe\r\nInjected: true"},
+			},
+			wantMessage:      `invalid value for header "X-Gateway"`,
+			forbiddenMessage: "safe\r\nInjected: true",
+		},
+		{
+			name: "invalid remove name",
+			policy: &HeaderTransformPolicy{
+				Remove: []string{"Bad Header"},
+			},
+			wantMessage: "invalid header name to remove",
+		},
+		{
+			name: "reserved set header",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{"hOsT": "upstream.example"},
+			},
+			wantMessage: `header "hOsT" is reserved`,
+		},
+		{
+			name: "reserved remove header",
+			policy: &HeaderTransformPolicy{
+				Remove: []string{"X-fOrWaRdEd-Custom"},
+			},
+			wantMessage: `header "X-fOrWaRdEd-Custom" is reserved`,
+		},
+		{
+			name: "duplicate set header",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{
+					"X-Environment": "production",
+					"x-environment": "staging",
+				},
+			},
+			wantMessage: `duplicate header name to set: "x-environment"`,
+		},
+		{
+			name: "duplicate remove header",
+			policy: &HeaderTransformPolicy{
+				Remove: []string{"X-Legacy", "x-legacy"},
+			},
+			wantMessage: `duplicate header name to remove: "x-legacy"`,
+		},
+		{
+			name: "header set and removed",
+			policy: &HeaderTransformPolicy{
+				Set:    map[string]string{"X-Environment": "production"},
+				Remove: []string{"x-environment"},
+			},
+			wantMessage: `header "x-environment" cannot be both set and removed`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []Route{
+				{
+					Name:           "users",
+					Protocol:       ProtocolHTTP,
+					PathPrefix:     "/users",
+					UpstreamURL:    mustParseURL(t, "http://users-service:8080"),
+					RequestHeaders: test.policy,
+				},
+			}
+
+			got, err := New(routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			for _, context := range []string{"users", "request headers policy", test.wantMessage} {
+				if !strings.Contains(err.Error(), context) {
+					t.Errorf("New() error = %q, want context %q", err, context)
+				}
+			}
+			if test.forbiddenMessage != "" && strings.Contains(err.Error(), test.forbiddenMessage) {
+				t.Errorf("New() error = %q, must not contain sensitive header value", err)
+			}
+		})
+	}
+}
+
+func TestIsReservedRequestHeader(t *testing.T) {
+	reserved := []string{
+		"Host",
+		"Connection",
+		"Content-Length",
+		"Forwarded",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Proxy-Connection",
+		"TE",
+		"Trailer",
+		"Transfer-Encoding",
+		"Upgrade",
+		"X-Real-IP",
+		"X-Request-ID",
+		"x-FoRwArDeD-For",
+		"X-Forwarded-Custom",
+	}
+
+	for _, name := range reserved {
+		t.Run("reserved "+name, func(t *testing.T) {
+			if !isReservedRequestHeader(name) {
+				t.Errorf("isReservedRequestHeader(%q) = false, want true", name)
+			}
+		})
+	}
+
+	allowed := []string{
+		"Authorization",
+		"Cookie",
+		"X-Gateway",
+		"X-Forwardedness",
+		"X-ForwardedCustom",
+	}
+
+	for _, name := range allowed {
+		t.Run("allowed "+name, func(t *testing.T) {
+			if isReservedRequestHeader(name) {
+				t.Errorf("isReservedRequestHeader(%q) = true, want false", name)
+			}
+		})
+	}
+}
+
+func TestHeaderTransformPolicyApply(t *testing.T) {
+	header := make(http.Header)
+	header.Add("X-Replace", "first")
+	header.Add("X-Replace", "second")
+	header.Set("X-Remove", "remove me")
+	header.Set("X-Keep", "keep me")
+
+	policy := HeaderTransformPolicy{
+		Set: map[string]string{
+			"x-replace": "replacement",
+			"X-Added":   "added",
+			"X-Empty":   "",
+		},
+		Remove: []string{"x-remove"},
+	}
+
+	policy.Apply(header)
+
+	tests := []struct {
+		name       string
+		headerName string
+		wantValues []string
+	}{
+		{
+			name:       "replace all existing values",
+			headerName: "X-Replace",
+			wantValues: []string{"replacement"},
+		},
+		{
+			name:       "add header",
+			headerName: "X-Added",
+			wantValues: []string{"added"},
+		},
+		{
+			name:       "preserve empty value",
+			headerName: "X-Empty",
+			wantValues: []string{""},
+		},
+		{
+			name:       "remove header case insensitively",
+			headerName: "X-Remove",
+		},
+		{
+			name:       "preserve unrelated header",
+			headerName: "X-Keep",
+			wantValues: []string{"keep me"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := header.Values(test.headerName); !slices.Equal(got, test.wantValues) {
+				t.Errorf("header.Values(%q) = %q, want %q", test.headerName, got, test.wantValues)
 			}
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -64,7 +65,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 	targetURL.Path = "/api"
 
-	gateway := httptest.NewServer(requestid.Middleware(New(targetURL, http.DefaultTransport, logger), logger))
+	gateway := httptest.NewServer(requestid.Middleware(New(targetURL, http.DefaultTransport, nil, logger), logger))
 	defer gateway.Close()
 
 	gatewayURL, err := url.Parse(gateway.URL)
@@ -157,6 +158,54 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 }
 
+func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
+	targetURL := &url.URL{Scheme: "http", Host: "upstream.local"}
+	transform := func(header http.Header) {
+		header.Del("X-Remove")
+		header.Set("X-Replace", "replacement")
+		header.Set("X-Added", "added")
+		header.Set("X-Forwarded-Proto", "transform-controlled")
+	}
+	reverseProxy := New(
+		targetURL,
+		http.DefaultTransport,
+		transform,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	in := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	in.Header.Set("X-Remove", "remove me")
+	in.Header.Add("X-Replace", "first")
+	in.Header.Add("X-Replace", "second")
+	out := in.Clone(in.Context())
+	proxyRequest := &httputil.ProxyRequest{In: in, Out: out}
+
+	reverseProxy.Rewrite(proxyRequest)
+
+	if got := out.Header.Values("X-Replace"); len(got) != 1 || got[0] != "replacement" {
+		t.Errorf("outgoing X-Replace values = %q, want %q", got, []string{"replacement"})
+	}
+	if got := out.Header.Values("X-Remove"); len(got) != 0 {
+		t.Errorf("outgoing X-Remove values = %q, want none", got)
+	}
+	if got := out.Header.Get("X-Added"); got != "added" {
+		t.Errorf("outgoing X-Added = %q, want %q", got, "added")
+	}
+	if got := out.Header.Get("X-Forwarded-Proto"); got != "http" {
+		t.Errorf("outgoing X-Forwarded-Proto = %q, want gateway-controlled value %q", got, "http")
+	}
+
+	if got := in.Header.Values("X-Replace"); len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Errorf("incoming X-Replace values = %q, want original values", got)
+	}
+	if got := in.Header.Get("X-Remove"); got != "remove me" {
+		t.Errorf("incoming X-Remove = %q, want original value %q", got, "remove me")
+	}
+	if got := in.Header.Values("X-Added"); len(got) != 0 {
+		t.Errorf("incoming X-Added values = %q, want none", got)
+	}
+}
+
 func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	var logBuffer bytes.Buffer
 	var logRecord struct {
@@ -191,7 +240,7 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	proxy := New(targetURL, http.DefaultTransport, logger)
+	proxy := New(targetURL, http.DefaultTransport, nil, logger)
 	handler := requestid.Middleware(proxy, logger)
 	handler.ServeHTTP(recorder, req)
 
@@ -319,6 +368,7 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 	reverseProxy := New(
 		targetURL,
 		circuitBreaker,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -378,7 +428,7 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	}
 	defer transport.CloseIdleConnections()
 
-	proxy := New(targetURL, transport, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	proxy := New(targetURL, transport, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	recorder := httptest.NewRecorder()
 
@@ -432,6 +482,7 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 	proxy := New(
 		targetURL,
 		retryTransport,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)

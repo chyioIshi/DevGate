@@ -37,6 +37,33 @@ routes:
 	}
 }
 
+func TestLoadExampleConfig(t *testing.T) {
+	path := filepath.Join("..", "..", "devgate.example.yaml")
+
+	got, err := loadConfigFile(path)
+	if err != nil {
+		t.Fatalf("loadConfigFile(%q) error = %v", path, err)
+	}
+	if len(got.Routes) == 0 {
+		t.Fatal("example config routes are empty")
+	}
+
+	requestHeaders := got.Routes[0].RequestHeaders
+	if requestHeaders == nil {
+		t.Fatal("example config request headers = nil, want configured policy")
+	}
+	if value := requestHeaders.Set["X-Gateway"]; value != "DevGate" {
+		t.Errorf("example config X-Gateway = %q, want %q", value, "DevGate")
+	}
+	if !slices.Equal(requestHeaders.Remove, []string{"X-Legacy-Header"}) {
+		t.Errorf(
+			"example config removed headers = %q, want %q",
+			requestHeaders.Remove,
+			[]string{"X-Legacy-Header"},
+		)
+	}
+}
+
 func TestLoadConfigFileReturnsOpenError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.yaml")
 
