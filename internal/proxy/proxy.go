@@ -10,11 +10,23 @@ import (
 	"github.com/chyioishi/devgate/internal/requestid"
 )
 
-func New(targetURL *url.URL, transport http.RoundTripper, logger *slog.Logger) *httputil.ReverseProxy {
+// RequestHeaderTransform modifies the headers of a request before it is sent
+// to the upstream server.
+type RequestHeaderTransform func(http.Header)
+
+func New(
+	targetURL *url.URL,
+	transport http.RoundTripper,
+	requestHeaderTransform RequestHeaderTransform,
+	logger *slog.Logger,
+) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(targetURL)
+			if requestHeaderTransform != nil {
+				requestHeaderTransform(pr.Out.Header)
+			}
 			pr.SetXForwarded()
 		},
 		ModifyResponse: func(response *http.Response) error {

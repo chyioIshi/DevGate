@@ -17,6 +17,12 @@ routes:
     strip_path_prefix: true
     request_timeout: 2.5s
     max_request_body_bytes: 10485760
+    request_headers:
+      set:
+        X-Gateway: DevGate
+        X-Environment: production
+      remove:
+        - X-Legacy-Header
     rate_limit:
       requests_per_second: 10.5
       burst: 20
@@ -34,6 +40,13 @@ routes:
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
 			MaxRequestBodyBytes: 10 * 1024 * 1024,
+			RequestHeaders: &HeaderTransformConfig{
+				Set: map[string]string{
+					"X-Gateway":     "DevGate",
+					"X-Environment": "production",
+				},
+				Remove: []string{"X-Legacy-Header"},
+			},
 			RateLimit: &RateLimitConfig{
 				RequestsPerSecond: 10.5,
 				Burst:             20,
@@ -101,6 +114,34 @@ routes:
 	}
 	if got.Routes != nil {
 		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownRequestHeadersField(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+    request_headers:
+      set:
+        X-Gateway: DevGate
+      unknown_field: value
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want unknown field error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "decode YAML config") {
+		t.Errorf("decodeConfig() error = %q, want decoding context", err)
 	}
 	if !strings.Contains(err.Error(), "unknown field") {
 		t.Errorf("decodeConfig() error = %q, want unknown field context", err)

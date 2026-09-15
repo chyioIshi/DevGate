@@ -39,7 +39,17 @@ func handlersFromRoutes(
 				return nil, fmt.Errorf("create circuit breaker transport for route %q: %w", route.Name, err)
 			}
 
-			var routeHandler http.Handler = proxy.New(route.UpstreamURL, circuitBreakerTransport, logger)
+			var requestHeaderTransform proxy.RequestHeaderTransform
+			if route.RequestHeaders != nil {
+				requestHeaderTransform = route.RequestHeaders.Apply
+			}
+
+			var routeHandler http.Handler = proxy.New(
+				route.UpstreamURL,
+				circuitBreakerTransport,
+				requestHeaderTransform,
+				logger,
+			)
 
 			if route.PathPrefix != "/" && route.StripPathPrefix {
 				routeHandler = http.StripPrefix(route.PathPrefix, routeHandler)

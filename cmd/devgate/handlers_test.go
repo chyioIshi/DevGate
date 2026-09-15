@@ -109,6 +109,52 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesAppliesRequestHeaderPolicy(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:        "users",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api/users",
+			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			RequestHeaders: &router.HeaderTransformPolicy{
+				Set:    map[string]string{"X-Gateway": "DevGate"},
+				Remove: []string{"X-Legacy-Header"},
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		&http.Transport{},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	reverseProxy, ok := handlers["users"].(*httputil.ReverseProxy)
+	if !ok {
+		t.Fatalf("handler type = %T, want *httputil.ReverseProxy", handlers["users"])
+	}
+	in := httptest.NewRequest(http.MethodGet, "http://gateway.local/api/users", nil)
+	in.Header.Set("X-Gateway", "client-controlled")
+	in.Header.Set("X-Legacy-Header", "legacy")
+	out := in.Clone(in.Context())
+
+	reverseProxy.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+
+	if got := out.Header.Values("X-Gateway"); len(got) != 1 || got[0] != "DevGate" {
+		t.Errorf("outgoing X-Gateway values = %q, want %q", got, []string{"DevGate"})
+	}
+	if got := out.Header.Values("X-Legacy-Header"); len(got) != 0 {
+		t.Errorf("outgoing X-Legacy-Header values = %q, want none", got)
+	}
+}
+
 func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 	routes := []router.Route{
 		{

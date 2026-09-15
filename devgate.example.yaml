@@ -3,6 +3,11 @@ routes:
     protocol: http
     path_prefix: /api/users
     upstream_url: http://users-service:8080
+    request_headers:
+      set:
+        X-Gateway: DevGate
+      remove:
+        - X-Legacy-Header
     rate_limit:
       requests_per_second: 100
       burst: 200
