@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 type Protocol string
@@ -21,10 +24,18 @@ type Route struct {
 	Protocol            Protocol
 	PathPrefix          string
 	UpstreamURL         *url.URL
+	RequestHeaders      *HeaderTransformPolicy
 	RateLimit           *RateLimitPolicy
 	StripPathPrefix     bool
 	RequestTimeout      time.Duration
 	MaxRequestBodyBytes int64
+}
+
+// HeaderTransformPolicy describes static header values to set and header names
+// to remove before forwarding a request upstream.
+type HeaderTransformPolicy struct {
+	Set    map[string]string
+	Remove []string
 }
 
 // RateLimitPolicy defines the local token-bucket settings for a route.
@@ -68,12 +79,101 @@ func (r Route) validate() error {
 	if r.MaxRequestBodyBytes < 0 {
 		return errors.New("max request body bytes must not be negative")
 	}
+	if r.RequestHeaders != nil {
+		if err := r.RequestHeaders.validate(); err != nil {
+			return fmt.Errorf("request headers policy: %w", err)
+		}
+	}
 	if r.RateLimit != nil {
 		if err := r.RateLimit.validate(); err != nil {
 			return fmt.Errorf("rate limit policy: %w", err)
 		}
 	}
 	return nil
+}
+
+func (p HeaderTransformPolicy) validate() error {
+	setNames := make(map[string]struct{}, len(p.Set))
+	removeNames := make(map[string]struct{}, len(p.Remove))
+	for header, value := range p.Set {
+		if !httpguts.ValidHeaderFieldName(header) {
+			return fmt.Errorf("invalid header name to set: %q", header)
+		}
+		if isReservedRequestHeader(header) {
+			return fmt.Errorf("header %q is reserved and cannot be modified", header)
+		}
+		if !httpguts.ValidHeaderFieldValue(value) {
+			return fmt.Errorf("invalid value for header %q", header)
+		}
+		normalized := strings.ToLower(header)
+		if _, exists := setNames[normalized]; exists {
+			return fmt.Errorf(
+				"duplicate header name to set: %q",
+				normalized,
+			)
+		}
+		setNames[normalized] = struct{}{}
+	}
+	for _, header := range p.Remove {
+		if !httpguts.ValidHeaderFieldName(header) {
+			return fmt.Errorf("invalid header name to remove: %q", header)
+		}
+		if isReservedRequestHeader(header) {
+			return fmt.Errorf("header %q is reserved and cannot be modified", header)
+		}
+		normalized := strings.ToLower(header)
+		if _, exists := removeNames[normalized]; exists {
+			return fmt.Errorf(
+				"duplicate header name to remove: %q",
+				normalized,
+			)
+		}
+		if _, exists := setNames[normalized]; exists {
+			return fmt.Errorf(
+				"header %q cannot be both set and removed",
+				normalized,
+			)
+		}
+		removeNames[normalized] = struct{}{}
+	}
+	return nil
+}
+
+func isReservedRequestHeader(name string) bool {
+	lowerName := strings.ToLower(name)
+
+	switch lowerName {
+	case "host",
+		"connection",
+		"content-length",
+		"forwarded",
+		"keep-alive",
+		"proxy-authenticate",
+		"proxy-authorization",
+		"proxy-connection",
+		"te",
+		"trailer",
+		"transfer-encoding",
+		"upgrade",
+		"x-real-ip",
+		"x-request-id":
+		return true
+	}
+	if strings.HasPrefix(lowerName, "x-forwarded-") {
+		return true
+	}
+	return false
+}
+
+// Apply mutates header in place by removing configured fields and replacing
+// configured fields with their static values.
+func (p HeaderTransformPolicy) Apply(header http.Header) {
+	for _, name := range p.Remove {
+		header.Del(name)
+	}
+	for name, value := range p.Set {
+		header.Set(name, value)
+	}
 }
 
 func (p RateLimitPolicy) validate() error {

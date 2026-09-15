@@ -4,14 +4,22 @@ import "time"
 
 // RouteConfig describes one gateway route loaded from the configuration file.
 type RouteConfig struct {
-	Name                string           `yaml:"name"`
-	Protocol            string           `yaml:"protocol"`
-	PathPrefix          string           `yaml:"path_prefix"`
-	UpstreamURL         string           `yaml:"upstream_url"`
-	RateLimit           *RateLimitConfig `yaml:"rate_limit"`
-	StripPathPrefix     bool             `yaml:"strip_path_prefix"`
-	RequestTimeout      time.Duration    `yaml:"request_timeout"`
-	MaxRequestBodyBytes int64            `yaml:"max_request_body_bytes"`
+	Name                string                 `yaml:"name"`
+	Protocol            string                 `yaml:"protocol"`
+	PathPrefix          string                 `yaml:"path_prefix"`
+	UpstreamURL         string                 `yaml:"upstream_url"`
+	RateLimit           *RateLimitConfig       `yaml:"rate_limit"`
+	StripPathPrefix     bool                   `yaml:"strip_path_prefix"`
+	RequestTimeout      time.Duration          `yaml:"request_timeout"`
+	MaxRequestBodyBytes int64                  `yaml:"max_request_body_bytes"`
+	RequestHeaders      *HeaderTransformConfig `yaml:"request_headers"`
+}
+
+// HeaderTransformConfig describes static header values to set and header names
+// to remove when applying a route's header policy.
+type HeaderTransformConfig struct {
+	Set    map[string]string `yaml:"set"`
+	Remove []string          `yaml:"remove"`
 }
 
 // RateLimitConfig configures a local token-bucket rate limiter for a route.

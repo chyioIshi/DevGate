@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/router"
@@ -14,6 +16,13 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 		upstreamURL, err := url.Parse(routeConfig.UpstreamURL)
 		if err != nil {
 			return nil, fmt.Errorf("parse upstream URL for route %q: %w", routeConfig.Name, err)
+		}
+		var requestHeaders *router.HeaderTransformPolicy
+		if routeConfig.RequestHeaders != nil {
+			requestHeaders = &router.HeaderTransformPolicy{
+				Set:    maps.Clone(routeConfig.RequestHeaders.Set),
+				Remove: slices.Clone(routeConfig.RequestHeaders.Remove),
+			}
 		}
 		var rateLimit *router.RateLimitPolicy
 		if routeConfig.RateLimit != nil {
@@ -27,6 +36,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			Protocol:            router.Protocol(routeConfig.Protocol),
 			PathPrefix:          routeConfig.PathPrefix,
 			UpstreamURL:         upstreamURL,
+			RequestHeaders:      requestHeaders,
 			RateLimit:           rateLimit,
 			StripPathPrefix:     routeConfig.StripPathPrefix,
 			RequestTimeout:      routeConfig.RequestTimeout,
