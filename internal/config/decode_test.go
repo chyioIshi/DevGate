@@ -16,6 +16,7 @@ routes:
     upstream_url: http://users-service:8080
     strip_path_prefix: true
     request_timeout: 2.5s
+    max_request_body_bytes: 10485760
     rate_limit:
       requests_per_second: 10.5
       burst: 20
@@ -26,12 +27,13 @@ routes:
 `
 	want := []RouteConfig{
 		{
-			Name:            "users",
-			Protocol:        "http",
-			PathPrefix:      "/api/users",
-			UpstreamURL:     "http://users-service:8080",
-			StripPathPrefix: true,
-			RequestTimeout:  2500 * time.Millisecond,
+			Name:                "users",
+			Protocol:            "http",
+			PathPrefix:          "/api/users",
+			UpstreamURL:         "http://users-service:8080",
+			StripPathPrefix:     true,
+			RequestTimeout:      2500 * time.Millisecond,
+			MaxRequestBodyBytes: 10 * 1024 * 1024,
 			RateLimit: &RateLimitConfig{
 				RequestsPerSecond: 10.5,
 				Burst:             20,

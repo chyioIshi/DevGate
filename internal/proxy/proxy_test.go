@@ -266,6 +266,24 @@ func TestStatusCodeForProxyError(t *testing.T) {
 			want: http.StatusServiceUnavailable,
 		},
 		{
+			name: "request body too large",
+			err:  &http.MaxBytesError{Limit: 1024},
+			want: http.StatusRequestEntityTooLarge,
+		},
+		{
+			name: "wrapped request body too large",
+			err:  fmt.Errorf("round trip: %w", &http.MaxBytesError{Limit: 1024}),
+			want: http.StatusRequestEntityTooLarge,
+		},
+		{
+			name: "request body too large takes precedence over timeout",
+			err: errors.Join(
+				&http.MaxBytesError{Limit: 1024},
+				testTimeoutError{timeout: true},
+			),
+			want: http.StatusRequestEntityTooLarge,
+		},
+		{
 			name: "reported timeout",
 			err:  testTimeoutError{timeout: true},
 			want: http.StatusGatewayTimeout,

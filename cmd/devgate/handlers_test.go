@@ -482,8 +482,136 @@ func TestHandlersFromRoutesRejectsNegativeRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesAppliesRequestBodyLimit(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantBody      string
+		wantStatus    int
+		unknownLength bool
+	}{
+		{
+			name:       "body at limit",
+			body:       "data",
+			wantBody:   "data",
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:          "body exceeds limit",
+			body:          "data!",
+			wantBody:      "data",
+			wantStatus:    http.StatusRequestEntityTooLarge,
+			unknownLength: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &bodyReadingRoundTripper{}
+			routes := []router.Route{
+				{
+					Name:                "users",
+					Protocol:            router.ProtocolHTTP,
+					PathPrefix:          "/api/users",
+					UpstreamURL:         mustParseRouteURL(t, "http://users-service:8080"),
+					MaxRequestBodyBytes: 4,
+				},
+			}
+
+			handlers, err := handlersFromRoutes(
+				routes,
+				transport,
+				testCircuitFailureThreshold,
+				testCircuitOpenTimeout,
+				newTestCircuitBreakerMetrics(),
+				newTestRateLimiterMetrics(),
+				discardLogger(),
+			)
+			if err != nil {
+				t.Fatalf("handlersFromRoutes() error = %v", err)
+			}
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"http://gateway.local/api/users",
+				strings.NewReader(test.body),
+			)
+			if test.unknownLength {
+				request.ContentLength = -1
+			}
+			response := httptest.NewRecorder()
+			handlers["users"].ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Errorf("status code = %d, want %d", response.Code, test.wantStatus)
+			}
+			if transport.calls != 1 {
+				t.Errorf("upstream RoundTrip() calls = %d, want 1", transport.calls)
+			}
+			if string(transport.body) != test.wantBody {
+				t.Errorf("upstream body = %q, want %q", transport.body, test.wantBody)
+			}
+		})
+	}
+}
+
+func TestHandlersFromRoutesRejectsNegativeRequestBodyLimit(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:                "users",
+			Protocol:            router.ProtocolHTTP,
+			PathPrefix:          "/api/users",
+			UpstreamURL:         mustParseRouteURL(t, "http://users-service:8080"),
+			MaxRequestBodyBytes: -1,
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		discardLogger(),
+	)
+	if err == nil {
+		t.Fatal("handlersFromRoutes() error = nil, want request body limit configuration error")
+	}
+	if handlers != nil {
+		t.Errorf("handlersFromRoutes() handlers = %+v, want nil", handlers)
+	}
+	for _, context := range []string{"users", "request body limit"} {
+		if !strings.Contains(err.Error(), context) {
+			t.Errorf("handlersFromRoutes() error = %q, want context %q", err, context)
+		}
+	}
+}
+
 type countingRoundTripper struct {
 	calls int
+}
+
+type bodyReadingRoundTripper struct {
+	calls int
+	body  []byte
+}
+
+func (t *bodyReadingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.calls++
+
+	body, err := io.ReadAll(request.Body)
+	t.body = body
+	if err != nil {
+		return nil, err
+	}
+
+	return &http.Response{
+		StatusCode: http.StatusNoContent,
+		Header:     make(http.Header),
+		Body:       http.NoBody,
+		Request:    request,
+	}, nil
 }
 
 type contextBlockingRoundTripper struct {
