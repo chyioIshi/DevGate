@@ -26,6 +26,10 @@ func TestRoutesFromConfig(t *testing.T) {
 				Set:    map[string]string{"X-Gateway": "DevGate"},
 				Remove: []string{"X-Legacy-Header"},
 			},
+			ResponseHeaders: &config.HeaderTransformConfig{
+				Set:    map[string]string{"X-Gateway-Response": "DevGate"},
+				Remove: []string{"X-Legacy-Response-Header"},
+			},
 			RateLimit: &config.RateLimitConfig{
 				RequestsPerSecond: 12.5,
 				Burst:             25,
@@ -44,6 +48,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		pathPrefix          string
 		upstreamURL         string
 		requestHeaders      *router.HeaderTransformPolicy
+		responseHeaders     *router.HeaderTransformPolicy
 		rateLimit           *router.RateLimitPolicy
 		stripPrefix         bool
 		requestTimeout      time.Duration
@@ -57,6 +62,10 @@ func TestRoutesFromConfig(t *testing.T) {
 			requestHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway": "DevGate"},
 				Remove: []string{"X-Legacy-Header"},
+			},
+			responseHeaders: &router.HeaderTransformPolicy{
+				Set:    map[string]string{"X-Gateway-Response": "DevGate"},
+				Remove: []string{"X-Legacy-Response-Header"},
 			},
 			rateLimit: &router.RateLimitPolicy{
 				RequestsPerSecond: 12.5,
@@ -115,6 +124,14 @@ func TestRoutesFromConfig(t *testing.T) {
 				want[i].requestHeaders,
 			)
 		}
+		if !reflect.DeepEqual(got[i].ResponseHeaders, want[i].responseHeaders) {
+			t.Errorf(
+				"route[%d].ResponseHeaders = %+v, want %+v",
+				i,
+				got[i].ResponseHeaders,
+				want[i].responseHeaders,
+			)
+		}
 		if got[i].StripPathPrefix != want[i].stripPrefix {
 			t.Errorf(
 				"route[%d].StripPathPrefix = %t, want %t",
@@ -142,18 +159,19 @@ func TestRoutesFromConfig(t *testing.T) {
 	}
 }
 
-func TestRoutesFromConfigCopiesRequestHeaderPolicy(t *testing.T) {
+func TestRoutesFromConfigCopiesHeaderPolicies(t *testing.T) {
 	headerConfig := &config.HeaderTransformConfig{
 		Set:    map[string]string{"X-Gateway": "DevGate"},
 		Remove: []string{"X-Legacy-Header"},
 	}
 	routeConfigs := []config.RouteConfig{
 		{
-			Name:           "users",
-			Protocol:       "http",
-			PathPrefix:     "/api/users",
-			UpstreamURL:    "http://users-service:8080",
-			RequestHeaders: headerConfig,
+			Name:            "users",
+			Protocol:        "http",
+			PathPrefix:      "/api/users",
+			UpstreamURL:     "http://users-service:8080",
+			RequestHeaders:  headerConfig,
+			ResponseHeaders: headerConfig,
 		},
 	}
 
@@ -170,6 +188,21 @@ func TestRoutesFromConfigCopiesRequestHeaderPolicy(t *testing.T) {
 	}
 	if name := got[0].RequestHeaders.Remove[0]; name != "X-Legacy-Header" {
 		t.Errorf("runtime remove header = %q, want %q", name, "X-Legacy-Header")
+	}
+	if value := got[0].ResponseHeaders.Set["X-Gateway"]; value != "DevGate" {
+		t.Errorf("runtime response set value = %q, want %q", value, "DevGate")
+	}
+	if name := got[0].ResponseHeaders.Remove[0]; name != "X-Legacy-Header" {
+		t.Errorf("runtime response remove header = %q, want %q", name, "X-Legacy-Header")
+	}
+
+	got[0].RequestHeaders.Set["X-Gateway"] = "request-mutated"
+	got[0].RequestHeaders.Remove[0] = "X-Request-Mutated"
+	if value := got[0].ResponseHeaders.Set["X-Gateway"]; value != "DevGate" {
+		t.Errorf("response set value after request mutation = %q, want %q", value, "DevGate")
+	}
+	if name := got[0].ResponseHeaders.Remove[0]; name != "X-Legacy-Header" {
+		t.Errorf("response remove header after request mutation = %q, want %q", name, "X-Legacy-Header")
 	}
 }
 

@@ -23,6 +23,11 @@ routes:
         X-Environment: production
       remove:
         - X-Legacy-Header
+    response_headers:
+      set:
+        X-Gateway-Response: DevGate
+      remove:
+        - X-Legacy-Response-Header
     rate_limit:
       requests_per_second: 10.5
       burst: 20
@@ -46,6 +51,10 @@ routes:
 					"X-Environment": "production",
 				},
 				Remove: []string{"X-Legacy-Header"},
+			},
+			ResponseHeaders: &HeaderTransformConfig{
+				Set:    map[string]string{"X-Gateway-Response": "DevGate"},
+				Remove: []string{"X-Legacy-Response-Header"},
 			},
 			RateLimit: &RateLimitConfig{
 				RequestsPerSecond: 10.5,
@@ -130,6 +139,34 @@ routes:
     request_headers:
       set:
         X-Gateway: DevGate
+      unknown_field: value
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want unknown field error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "decode YAML config") {
+		t.Errorf("decodeConfig() error = %q, want decoding context", err)
+	}
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownResponseHeadersField(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+    response_headers:
+      set:
+        X-Gateway-Response: DevGate
       unknown_field: value
 `
 

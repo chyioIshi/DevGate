@@ -31,6 +31,7 @@ type receivedRequest struct {
 
 func TestReverseProxyForwardsRequest(t *testing.T) {
 	const upstreamRequestID = "upstream-controlled-value"
+	const transformRequestID = "transform-controlled-value"
 
 	logger := slog.New(
 		slog.NewTextHandler(io.Discard, nil),
@@ -49,6 +50,9 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 			}
 
 			w.Header().Set("X-Upstream", "true")
+			w.Header().Add("X-Replace", "first")
+			w.Header().Add("X-Replace", "second")
+			w.Header().Set("X-Remove", "remove me")
 			w.Header().Set(requestid.HeaderName, upstreamRequestID)
 			w.WriteHeader(http.StatusCreated)
 
@@ -65,7 +69,16 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 	targetURL.Path = "/api"
 
-	gateway := httptest.NewServer(requestid.Middleware(New(targetURL, http.DefaultTransport, nil, logger), logger))
+	responseHeaderTransform := func(header http.Header) {
+		header.Del("X-Remove")
+		header.Set("X-Replace", "replacement")
+		header.Set("X-Added", "added")
+		header.Set(requestid.HeaderName, transformRequestID)
+	}
+	gateway := httptest.NewServer(requestid.Middleware(
+		New(targetURL, http.DefaultTransport, nil, responseHeaderTransform, logger),
+		logger,
+	))
 	defer gateway.Close()
 
 	gatewayURL, err := url.Parse(gateway.URL)
@@ -135,6 +148,15 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	if got := resp.Header.Get("X-Upstream"); got != "true" {
 		t.Errorf("response header X-Upstream = %q, want %q", got, "true")
 	}
+	if got := resp.Header.Values("X-Replace"); len(got) != 1 || got[0] != "replacement" {
+		t.Errorf("response X-Replace values = %q, want %q", got, []string{"replacement"})
+	}
+	if got := resp.Header.Values("X-Remove"); len(got) != 0 {
+		t.Errorf("response X-Remove values = %q, want none", got)
+	}
+	if got := resp.Header.Get("X-Added"); got != "added" {
+		t.Errorf("response X-Added = %q, want %q", got, "added")
+	}
 	responseRequestIDs := resp.Header.Values(requestid.HeaderName)
 	if len(responseRequestIDs) != 1 {
 		t.Fatalf("response request IDs = %q, want exactly one value", responseRequestIDs)
@@ -145,6 +167,9 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	}
 	if responseRequestID == upstreamRequestID {
 		t.Error("upstream replaced gateway-generated response request ID")
+	}
+	if responseRequestID == transformRequestID {
+		t.Error("response transform replaced gateway-generated response request ID")
 	}
 	if responseRequestID == "spoofed-client-value" {
 		t.Error("gateway preserved spoofed client request ID")
@@ -170,6 +195,7 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 		targetURL,
 		http.DefaultTransport,
 		transform,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -240,7 +266,7 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	proxy := New(targetURL, http.DefaultTransport, nil, logger)
+	proxy := New(targetURL, http.DefaultTransport, nil, nil, logger)
 	handler := requestid.Middleware(proxy, logger)
 	handler.ServeHTTP(recorder, req)
 
@@ -369,6 +395,7 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 		targetURL,
 		circuitBreaker,
 		nil,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -428,7 +455,7 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	}
 	defer transport.CloseIdleConnections()
 
-	proxy := New(targetURL, transport, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	proxy := New(targetURL, transport, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	recorder := httptest.NewRecorder()
 
@@ -482,6 +509,7 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 	proxy := New(
 		targetURL,
 		retryTransport,
+		nil,
 		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)

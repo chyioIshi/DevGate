@@ -62,6 +62,21 @@ func TestLoadExampleConfig(t *testing.T) {
 			[]string{"X-Legacy-Header"},
 		)
 	}
+
+	responseHeaders := got.Routes[0].ResponseHeaders
+	if responseHeaders == nil {
+		t.Fatal("example config response headers = nil, want configured policy")
+	}
+	if value := responseHeaders.Set["X-Gateway-Response"]; value != "DevGate" {
+		t.Errorf("example config X-Gateway-Response = %q, want %q", value, "DevGate")
+	}
+	if !slices.Equal(responseHeaders.Remove, []string{"X-Legacy-Response-Header"}) {
+		t.Errorf(
+			"example config removed response headers = %q, want %q",
+			responseHeaders.Remove,
+			[]string{"X-Legacy-Response-Header"},
+		)
+	}
 }
 
 func TestLoadConfigFileReturnsOpenError(t *testing.T) {

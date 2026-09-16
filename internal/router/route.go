@@ -25,6 +25,7 @@ type Route struct {
 	PathPrefix          string
 	UpstreamURL         *url.URL
 	RequestHeaders      *HeaderTransformPolicy
+	ResponseHeaders     *HeaderTransformPolicy
 	RateLimit           *RateLimitPolicy
 	StripPathPrefix     bool
 	RequestTimeout      time.Duration
@@ -32,7 +33,7 @@ type Route struct {
 }
 
 // HeaderTransformPolicy describes static header values to set and header names
-// to remove before forwarding a request upstream.
+// to remove when transforming a request or response for a route.
 type HeaderTransformPolicy struct {
 	Set    map[string]string
 	Remove []string
@@ -80,8 +81,13 @@ func (r Route) validate() error {
 		return errors.New("max request body bytes must not be negative")
 	}
 	if r.RequestHeaders != nil {
-		if err := r.RequestHeaders.validate(); err != nil {
+		if err := r.RequestHeaders.validate(isReservedRequestHeader); err != nil {
 			return fmt.Errorf("request headers policy: %w", err)
+		}
+	}
+	if r.ResponseHeaders != nil {
+		if err := r.ResponseHeaders.validate(isReservedResponseHeader); err != nil {
+			return fmt.Errorf("response headers policy: %w", err)
 		}
 	}
 	if r.RateLimit != nil {
@@ -92,14 +98,14 @@ func (r Route) validate() error {
 	return nil
 }
 
-func (p HeaderTransformPolicy) validate() error {
+func (p HeaderTransformPolicy) validate(isReserved func(string) bool) error {
 	setNames := make(map[string]struct{}, len(p.Set))
 	removeNames := make(map[string]struct{}, len(p.Remove))
 	for header, value := range p.Set {
 		if !httpguts.ValidHeaderFieldName(header) {
 			return fmt.Errorf("invalid header name to set: %q", header)
 		}
-		if isReservedRequestHeader(header) {
+		if isReserved(header) {
 			return fmt.Errorf("header %q is reserved and cannot be modified", header)
 		}
 		if !httpguts.ValidHeaderFieldValue(value) {
@@ -118,7 +124,7 @@ func (p HeaderTransformPolicy) validate() error {
 		if !httpguts.ValidHeaderFieldName(header) {
 			return fmt.Errorf("invalid header name to remove: %q", header)
 		}
-		if isReservedRequestHeader(header) {
+		if isReserved(header) {
 			return fmt.Errorf("header %q is reserved and cannot be modified", header)
 		}
 		normalized := strings.ToLower(header)
@@ -160,6 +166,27 @@ func isReservedRequestHeader(name string) bool {
 		return true
 	}
 	if strings.HasPrefix(lowerName, "x-forwarded-") {
+		return true
+	}
+	return false
+}
+
+func isReservedResponseHeader(name string) bool {
+	lowerName := strings.ToLower(name)
+
+	switch lowerName {
+	case "connection",
+		"content-length",
+		"content-encoding",
+		"keep-alive",
+		"proxy-authenticate",
+		"proxy-authorization",
+		"proxy-connection",
+		"te",
+		"trailer",
+		"transfer-encoding",
+		"upgrade",
+		"x-request-id":
 		return true
 	}
 	return false

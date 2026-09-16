@@ -8,6 +8,11 @@ routes:
         X-Gateway: DevGate
       remove:
         - X-Legacy-Header
+    response_headers:
+      set:
+        X-Gateway-Response: DevGate
+      remove:
+        - X-Legacy-Response-Header
     rate_limit:
       requests_per_second: 100
       burst: 200
