@@ -109,7 +109,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	}
 }
 
-func TestHandlersFromRoutesAppliesRequestHeaderPolicy(t *testing.T) {
+func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 	routes := []router.Route{
 		{
 			Name:        "users",
@@ -119,6 +119,10 @@ func TestHandlersFromRoutesAppliesRequestHeaderPolicy(t *testing.T) {
 			RequestHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway": "DevGate"},
 				Remove: []string{"X-Legacy-Header"},
+			},
+			ResponseHeaders: &router.HeaderTransformPolicy{
+				Set:    map[string]string{"X-Gateway-Response": "DevGate"},
+				Remove: []string{"X-Legacy-Response-Header"},
 			},
 		},
 	}
@@ -152,6 +156,19 @@ func TestHandlersFromRoutesAppliesRequestHeaderPolicy(t *testing.T) {
 	}
 	if got := out.Header.Values("X-Legacy-Header"); len(got) != 0 {
 		t.Errorf("outgoing X-Legacy-Header values = %q, want none", got)
+	}
+
+	response := &http.Response{Header: make(http.Header)}
+	response.Header.Set("X-Gateway-Response", "upstream-controlled")
+	response.Header.Set("X-Legacy-Response-Header", "legacy")
+	if err := reverseProxy.ModifyResponse(response); err != nil {
+		t.Fatalf("ModifyResponse() error = %v", err)
+	}
+	if got := response.Header.Values("X-Gateway-Response"); len(got) != 1 || got[0] != "DevGate" {
+		t.Errorf("response X-Gateway-Response values = %q, want %q", got, []string{"DevGate"})
+	}
+	if got := response.Header.Values("X-Legacy-Response-Header"); len(got) != 0 {
+		t.Errorf("response X-Legacy-Response-Header values = %q, want none", got)
 	}
 }
 

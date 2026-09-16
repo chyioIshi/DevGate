@@ -644,6 +644,173 @@ func TestIsReservedRequestHeader(t *testing.T) {
 	}
 }
 
+func TestNewValidatesResponseHeaderPolicy(t *testing.T) {
+	tests := []struct {
+		name             string
+		policy           *HeaderTransformPolicy
+		wantMessage      string
+		forbiddenMessage string
+	}{
+		{
+			name:   "empty policy",
+			policy: &HeaderTransformPolicy{},
+		},
+		{
+			name: "valid set and remove",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{
+					"X-Content-Type-Options": "nosniff",
+					"X-Empty-Value":          "",
+				},
+				Remove: []string{"Server", "X-Real-IP"},
+			},
+		},
+		{
+			name: "invalid set name",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{"Bad Header": "value"},
+			},
+			wantMessage: "invalid header name to set",
+		},
+		{
+			name: "invalid set value",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{"X-Gateway": "safe\r\nInjected: true"},
+			},
+			wantMessage:      `invalid value for header "X-Gateway"`,
+			forbiddenMessage: "safe\r\nInjected: true",
+		},
+		{
+			name: "invalid remove name",
+			policy: &HeaderTransformPolicy{
+				Remove: []string{"Bad Header"},
+			},
+			wantMessage: "invalid header name to remove",
+		},
+		{
+			name: "reserved set header",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{"cOnTeNt-EnCoDiNg": "gzip"},
+			},
+			wantMessage: `header "cOnTeNt-EnCoDiNg" is reserved`,
+		},
+		{
+			name: "reserved remove header",
+			policy: &HeaderTransformPolicy{
+				Remove: []string{"X-rEqUeSt-Id"},
+			},
+			wantMessage: `header "X-rEqUeSt-Id" is reserved`,
+		},
+		{
+			name: "duplicate set header",
+			policy: &HeaderTransformPolicy{
+				Set: map[string]string{
+					"X-Environment": "production",
+					"x-environment": "staging",
+				},
+			},
+			wantMessage: `duplicate header name to set: "x-environment"`,
+		},
+		{
+			name: "duplicate remove header",
+			policy: &HeaderTransformPolicy{
+				Remove: []string{"Server", "server"},
+			},
+			wantMessage: `duplicate header name to remove: "server"`,
+		},
+		{
+			name: "header set and removed",
+			policy: &HeaderTransformPolicy{
+				Set:    map[string]string{"X-Environment": "production"},
+				Remove: []string{"x-environment"},
+			},
+			wantMessage: `header "x-environment" cannot be both set and removed`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []Route{
+				{
+					Name:            "users",
+					Protocol:        ProtocolHTTP,
+					PathPrefix:      "/users",
+					UpstreamURL:     mustParseURL(t, "http://users-service:8080"),
+					ResponseHeaders: test.policy,
+				},
+			}
+
+			got, err := New(routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			for _, context := range []string{"users", "response headers policy", test.wantMessage} {
+				if !strings.Contains(err.Error(), context) {
+					t.Errorf("New() error = %q, want context %q", err, context)
+				}
+			}
+			if test.forbiddenMessage != "" && strings.Contains(err.Error(), test.forbiddenMessage) {
+				t.Errorf("New() error = %q, must not contain sensitive header value", err)
+			}
+		})
+	}
+}
+
+func TestIsReservedResponseHeader(t *testing.T) {
+	reserved := []string{
+		"Connection",
+		"Content-Length",
+		"Content-Encoding",
+		"Keep-Alive",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Proxy-Connection",
+		"TE",
+		"Trailer",
+		"Transfer-Encoding",
+		"Upgrade",
+		"x-ReQuEsT-iD",
+	}
+
+	for _, name := range reserved {
+		t.Run("reserved "+name, func(t *testing.T) {
+			if !isReservedResponseHeader(name) {
+				t.Errorf("isReservedResponseHeader(%q) = false, want true", name)
+			}
+		})
+	}
+
+	allowed := []string{
+		"Content-Security-Policy",
+		"Content-Type",
+		"Server",
+		"Set-Cookie",
+		"X-Forwarded-For",
+		"X-Real-IP",
+	}
+
+	for _, name := range allowed {
+		t.Run("allowed "+name, func(t *testing.T) {
+			if isReservedResponseHeader(name) {
+				t.Errorf("isReservedResponseHeader(%q) = true, want false", name)
+			}
+		})
+	}
+}
+
 func TestHeaderTransformPolicyApply(t *testing.T) {
 	header := make(http.Header)
 	header.Add("X-Replace", "first")
