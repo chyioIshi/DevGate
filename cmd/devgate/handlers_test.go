@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -48,6 +49,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err != nil {
@@ -134,6 +136,7 @@ func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err != nil {
@@ -172,6 +175,47 @@ func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesPassesTrustedProxyCIDRsToReverseProxy(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:        "users",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api/users",
+			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		[]netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")},
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	reverseProxy, ok := handlers["users"].(*httputil.ReverseProxy)
+	if !ok {
+		t.Fatalf("handler type = %T, want *httputil.ReverseProxy", handlers["users"])
+	}
+	in := httptest.NewRequest(http.MethodGet, "http://gateway.local/api/users", nil)
+	in.RemoteAddr = "10.0.0.2:1234"
+	in.Header.Set("X-Forwarded-For", "203.0.113.10")
+	out := in.Clone(in.Context())
+
+	reverseProxy.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+
+	const want = "203.0.113.10, 10.0.0.2"
+	if got := out.Header.Get("X-Forwarded-For"); got != want {
+		t.Errorf("outgoing X-Forwarded-For = %q, want %q", got, want)
+	}
+}
+
 func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 	routes := []router.Route{
 		{
@@ -195,6 +239,7 @@ func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err == nil {
@@ -228,6 +273,7 @@ func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err == nil {
@@ -258,6 +304,7 @@ func TestHandlersFromRoutesReturnsCircuitBreakerConfigurationError(t *testing.T)
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err == nil {
@@ -295,6 +342,7 @@ func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err == nil {
@@ -371,6 +419,7 @@ func TestHandlersFromRoutesStripsPathPrefix(t *testing.T) {
 				testCircuitOpenTimeout,
 				newTestCircuitBreakerMetrics(),
 				newTestRateLimiterMetrics(),
+				nil,
 				discardLogger(),
 			)
 			if err != nil {
@@ -428,6 +477,7 @@ func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
 		testCircuitOpenTimeout,
 		metrics.NewCircuitBreaker(registry),
 		metrics.NewRateLimiter(registry),
+		nil,
 		discardLogger(),
 	)
 	if err != nil {
@@ -493,6 +543,7 @@ func TestHandlersFromRoutesAppliesRequestTimeout(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err != nil {
@@ -529,6 +580,7 @@ func TestHandlersFromRoutesRejectsNegativeRequestTimeout(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err == nil {
@@ -588,6 +640,7 @@ func TestHandlersFromRoutesAppliesRequestBodyLimit(t *testing.T) {
 				testCircuitOpenTimeout,
 				newTestCircuitBreakerMetrics(),
 				newTestRateLimiterMetrics(),
+				nil,
 				discardLogger(),
 			)
 			if err != nil {
@@ -636,6 +689,7 @@ func TestHandlersFromRoutesRejectsNegativeRequestBodyLimit(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		nil,
 		discardLogger(),
 	)
 	if err == nil {

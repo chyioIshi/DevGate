@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/chyioishi/devgate/internal/metrics"
@@ -21,6 +22,7 @@ func handlersFromRoutes(
 	circuitOpenTimeout time.Duration,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
+	trustedCIDRs []netip.Prefix,
 	logger *slog.Logger,
 ) (map[string]http.Handler, error) {
 	handlers := make(map[string]http.Handler, len(routes))
@@ -53,6 +55,7 @@ func handlersFromRoutes(
 				circuitBreakerTransport,
 				requestHeaderTransform,
 				responseHeaderTransform,
+				trustedCIDRs,
 				logger,
 			)
 
