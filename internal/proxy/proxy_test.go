@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync/atomic"
@@ -76,7 +77,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 		header.Set(requestid.HeaderName, transformRequestID)
 	}
 	gateway := httptest.NewServer(requestid.Middleware(
-		New(targetURL, http.DefaultTransport, nil, responseHeaderTransform, logger),
+		New(targetURL, http.DefaultTransport, nil, responseHeaderTransform, nil, logger),
 		logger,
 	))
 	defer gateway.Close()
@@ -196,6 +197,7 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 		http.DefaultTransport,
 		transform,
 		nil,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -229,6 +231,32 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 	}
 	if got := in.Header.Values("X-Added"); len(got) != 0 {
 		t.Errorf("incoming X-Added values = %q, want none", got)
+	}
+}
+
+func TestReverseProxyClonesTrustedProxyCIDRs(t *testing.T) {
+	trustedCIDRs := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")}
+	reverseProxy := New(
+		&url.URL{Scheme: "http", Host: "upstream.local"},
+		http.DefaultTransport,
+		nil,
+		nil,
+		trustedCIDRs,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	trustedCIDRs[0] = netip.MustParsePrefix("192.0.2.0/24")
+
+	in := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	in.RemoteAddr = "10.0.0.2:1234"
+	in.Header.Set("X-Forwarded-For", "203.0.113.10")
+	out := in.Clone(in.Context())
+
+	reverseProxy.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+
+	const want = "203.0.113.10, 10.0.0.2"
+	if got := out.Header.Get("X-Forwarded-For"); got != want {
+		t.Errorf("outgoing X-Forwarded-For = %q, want %q", got, want)
 	}
 }
 
@@ -266,7 +294,7 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	proxy := New(targetURL, http.DefaultTransport, nil, nil, logger)
+	proxy := New(targetURL, http.DefaultTransport, nil, nil, nil, logger)
 	handler := requestid.Middleware(proxy, logger)
 	handler.ServeHTTP(recorder, req)
 
@@ -396,6 +424,7 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 		circuitBreaker,
 		nil,
 		nil,
+		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
@@ -455,7 +484,7 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	}
 	defer transport.CloseIdleConnections()
 
-	proxy := New(targetURL, transport, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	proxy := New(targetURL, transport, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	recorder := httptest.NewRecorder()
 
@@ -509,6 +538,7 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 	proxy := New(
 		targetURL,
 		retryTransport,
+		nil,
 		nil,
 		nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)),

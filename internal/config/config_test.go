@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,6 +31,7 @@ const (
 	envUpstreamRetryBaseDelay          = "DEVGATE_UPSTREAM_RETRY_BASE_DELAY"
 	envUpstreamCircuitFailureThreshold = "DEVGATE_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD"
 	envUpstreamCircuitOpenTimeout      = "DEVGATE_UPSTREAM_CIRCUIT_OPEN_TIMEOUT"
+	envTrustedProxyCIDRs               = "DEVGATE_TRUSTED_PROXY_CIDRS"
 	envConfigFile                      = "DEVGATE_CONFIG_FILE"
 	envLogFormat                       = "DEVGATE_LOG_FORMAT"
 	envLogLevel                        = "DEVGATE_LOG_LEVEL"
@@ -46,6 +48,7 @@ var configEnvKeys = []string{
 	envUpstreamRetryBaseDelay,
 	envUpstreamCircuitFailureThreshold,
 	envUpstreamCircuitOpenTimeout,
+	envTrustedProxyCIDRs,
 	envConfigFile,
 	envLogFormat,
 	envLogLevel,
@@ -96,6 +99,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envUpstreamRetryBaseDelay, "250ms")
 	t.Setenv(envUpstreamCircuitFailureThreshold, "7")
 	t.Setenv(envUpstreamCircuitOpenTimeout, "45s")
+	t.Setenv(envTrustedProxyCIDRs, "10.0.0.10/32,2001:db8::10/128")
 	t.Setenv(envLogFormat, "json")
 	t.Setenv(envLogLevel, "debug")
 	configPath := writeConfigFile(t, testRouteConfigYAML)
@@ -117,13 +121,84 @@ func TestLoadOverrides(t *testing.T) {
 		UpstreamRetryBaseDelay:          250 * time.Millisecond,
 		UpstreamCircuitFailureThreshold: 7,
 		UpstreamCircuitOpenTimeout:      45 * time.Second,
-		ConfigFile:                      configPath,
-		Routes:                          testRouteConfigs(),
-		LogFormat:                       "json",
-		LogLevel:                        "debug",
+		TrustedProxyCIDRs: []netip.Prefix{
+			netip.MustParsePrefix("10.0.0.10/32"),
+			netip.MustParsePrefix("2001:db8::10/128"),
+		},
+		ConfigFile: configPath,
+		Routes:     testRouteConfigs(),
+		LogFormat:  "json",
+		LogLevel:   "debug",
 	}
 
 	assertConfigEqual(t, got, want)
+}
+
+func TestLoadRejectsInvalidTrustedProxyCIDRs(t *testing.T) {
+	tests := []struct {
+		name        string
+		value       string
+		wantContext string
+		wantMessage string
+	}{
+		{
+			name:        "malformed CIDR",
+			value:       "not-a-cidr",
+			wantContext: "parse environment",
+			wantMessage: "TrustedProxyCIDRs",
+		},
+		{
+			name:        "non-canonical network",
+			value:       "10.0.0.10/24",
+			wantContext: "validate config",
+			wantMessage: "must be masked as 10.0.0.0/24",
+		},
+		{
+			name:        "trust all IPv4 addresses",
+			value:       "0.0.0.0/0",
+			wantContext: "validate config",
+			wantMessage: "must not trust all addresses",
+		},
+		{
+			name:        "trust all IPv6 addresses",
+			value:       "::/0",
+			wantContext: "validate config",
+			wantMessage: "must not trust all addresses",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(envTrustedProxyCIDRs, test.value)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want trusted proxy CIDR error")
+			}
+			assertZeroConfig(t, got)
+			if !strings.Contains(err.Error(), test.wantContext) {
+				t.Errorf("Load() error = %q, want context %q", err, test.wantContext)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("Load() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestConfigValidateRejectsInvalidTrustedProxyPrefix(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.TrustedProxyCIDRs = []netip.Prefix{{}}
+
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate() error = nil, want invalid trusted proxy CIDR error")
+	}
+	if !strings.Contains(err.Error(), "trusted proxy CIDR") ||
+		!strings.Contains(err.Error(), "is invalid") {
+		t.Errorf("validate() error = %q, want invalid trusted proxy CIDR context", err)
+	}
 }
 
 func TestLoadRejectsInvalidLogConfiguration(t *testing.T) {
@@ -460,6 +535,13 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 	if !slices.Equal(got.Routes, want.Routes) {
 		t.Errorf("Config.Routes = %+v, want %+v", got.Routes, want.Routes)
 	}
+	if !slices.Equal(got.TrustedProxyCIDRs, want.TrustedProxyCIDRs) {
+		t.Errorf(
+			"Config.TrustedProxyCIDRs = %v, want %v",
+			got.TrustedProxyCIDRs,
+			want.TrustedProxyCIDRs,
+		)
+	}
 }
 
 func assertZeroConfig(t *testing.T, got Config) {
@@ -476,6 +558,24 @@ func testRouteConfigs() []RouteConfig {
 			PathPrefix:  "/api/users",
 			UpstreamURL: "http://users-service:8080",
 		},
+	}
+}
+
+func validConfigForTest() Config {
+	return Config{
+		HTTPAddr:                        ":8080",
+		ReadHeaderTimeout:               5 * time.Second,
+		MaxHeaderBytes:                  64 * 1024,
+		IdleTimeout:                     60 * time.Second,
+		ShutdownTimeout:                 10 * time.Second,
+		ConfigFile:                      "devgate.yaml",
+		LogFormat:                       LogFormatText,
+		LogLevel:                        LogLevelInfo,
+		UpstreamResponseHeaderTimeout:   10 * time.Second,
+		UpstreamMaxAttempts:             2,
+		UpstreamRetryBaseDelay:          100 * time.Millisecond,
+		UpstreamCircuitFailureThreshold: 5,
+		UpstreamCircuitOpenTimeout:      30 * time.Second,
 	}
 }
 

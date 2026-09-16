@@ -43,6 +43,7 @@ func TestCircuitBreakerMetricsTrackRouteLifecycle(t *testing.T) {
 		time.Minute,
 		metrics.NewCircuitBreaker(registry),
 		metrics.NewRateLimiter(registry),
+		nil,
 		discardLogger(),
 	)
 	if err != nil {
