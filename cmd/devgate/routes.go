@@ -17,13 +17,12 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 		if err != nil {
 			return nil, fmt.Errorf("parse upstream URL for route %q: %w", routeConfig.Name, err)
 		}
-		var requestHeaders *router.HeaderTransformPolicy
-		if routeConfig.RequestHeaders != nil {
-			requestHeaders = &router.HeaderTransformPolicy{
-				Set:    maps.Clone(routeConfig.RequestHeaders.Set),
-				Remove: slices.Clone(routeConfig.RequestHeaders.Remove),
-			}
-		}
+		requestHeaders := headerTransformPolicyFromConfig(
+			routeConfig.RequestHeaders,
+		)
+		responseHeaders := headerTransformPolicyFromConfig(
+			routeConfig.ResponseHeaders,
+		)
 		var rateLimit *router.RateLimitPolicy
 		if routeConfig.RateLimit != nil {
 			rateLimit = &router.RateLimitPolicy{
@@ -37,6 +36,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			PathPrefix:          routeConfig.PathPrefix,
 			UpstreamURL:         upstreamURL,
 			RequestHeaders:      requestHeaders,
+			ResponseHeaders:     responseHeaders,
 			RateLimit:           rateLimit,
 			StripPathPrefix:     routeConfig.StripPathPrefix,
 			RequestTimeout:      routeConfig.RequestTimeout,
@@ -46,4 +46,14 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 	}
 
 	return routes, nil
+}
+
+func headerTransformPolicyFromConfig(headerConfig *config.HeaderTransformConfig) *router.HeaderTransformPolicy {
+	if headerConfig == nil {
+		return nil
+	}
+	return &router.HeaderTransformPolicy{
+		Set:    maps.Clone(headerConfig.Set),
+		Remove: slices.Clone(headerConfig.Remove),
+	}
 }

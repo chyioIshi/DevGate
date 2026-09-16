@@ -13,6 +13,7 @@ type RouteConfig struct {
 	RequestTimeout      time.Duration          `yaml:"request_timeout"`
 	MaxRequestBodyBytes int64                  `yaml:"max_request_body_bytes"`
 	RequestHeaders      *HeaderTransformConfig `yaml:"request_headers"`
+	ResponseHeaders     *HeaderTransformConfig `yaml:"response_headers"`
 }
 
 // HeaderTransformConfig describes static header values to set and header names

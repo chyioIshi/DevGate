@@ -14,10 +14,15 @@ import (
 // to the upstream server.
 type RequestHeaderTransform func(http.Header)
 
+// ResponseHeaderTransform modifies the headers of a response received from
+// the upstream server before it is sent to the client.
+type ResponseHeaderTransform func(http.Header)
+
 func New(
 	targetURL *url.URL,
 	transport http.RoundTripper,
 	requestHeaderTransform RequestHeaderTransform,
+	responseHeaderTransform ResponseHeaderTransform,
 	logger *slog.Logger,
 ) *httputil.ReverseProxy {
 	proxy := &httputil.ReverseProxy{
@@ -30,6 +35,9 @@ func New(
 			pr.SetXForwarded()
 		},
 		ModifyResponse: func(response *http.Response) error {
+			if responseHeaderTransform != nil {
+				responseHeaderTransform(response.Header)
+			}
 			response.Header.Del(requestid.HeaderName)
 			return nil
 		},

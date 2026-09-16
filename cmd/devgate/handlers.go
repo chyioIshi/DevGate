@@ -43,11 +43,16 @@ func handlersFromRoutes(
 			if route.RequestHeaders != nil {
 				requestHeaderTransform = route.RequestHeaders.Apply
 			}
+			var responseHeaderTransform proxy.ResponseHeaderTransform
+			if route.ResponseHeaders != nil {
+				responseHeaderTransform = route.ResponseHeaders.Apply
+			}
 
 			var routeHandler http.Handler = proxy.New(
 				route.UpstreamURL,
 				circuitBreakerTransport,
 				requestHeaderTransform,
+				responseHeaderTransform,
 				logger,
 			)
 
