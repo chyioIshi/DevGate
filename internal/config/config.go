@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -30,13 +31,14 @@ type Config struct {
 	ShutdownTimeout                 time.Duration `env:"DEVGATE_SHUTDOWN_TIMEOUT"`
 	ConfigFile                      string        `env:"DEVGATE_CONFIG_FILE"`
 	Routes                          []RouteConfig
-	LogFormat                       LogFormat     `env:"DEVGATE_LOG_FORMAT"`
-	LogLevel                        LogLevel      `env:"DEVGATE_LOG_LEVEL"`
-	UpstreamResponseHeaderTimeout   time.Duration `env:"DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"`
-	UpstreamMaxAttempts             int           `env:"DEVGATE_UPSTREAM_MAX_ATTEMPTS"`
-	UpstreamRetryBaseDelay          time.Duration `env:"DEVGATE_UPSTREAM_RETRY_BASE_DELAY"`
-	UpstreamCircuitFailureThreshold int           `env:"DEVGATE_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD"`
-	UpstreamCircuitOpenTimeout      time.Duration `env:"DEVGATE_UPSTREAM_CIRCUIT_OPEN_TIMEOUT"`
+	LogFormat                       LogFormat      `env:"DEVGATE_LOG_FORMAT"`
+	LogLevel                        LogLevel       `env:"DEVGATE_LOG_LEVEL"`
+	UpstreamResponseHeaderTimeout   time.Duration  `env:"DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"`
+	UpstreamMaxAttempts             int            `env:"DEVGATE_UPSTREAM_MAX_ATTEMPTS"`
+	UpstreamRetryBaseDelay          time.Duration  `env:"DEVGATE_UPSTREAM_RETRY_BASE_DELAY"`
+	UpstreamCircuitFailureThreshold int            `env:"DEVGATE_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD"`
+	UpstreamCircuitOpenTimeout      time.Duration  `env:"DEVGATE_UPSTREAM_CIRCUIT_OPEN_TIMEOUT"`
+	TrustedProxyCIDRs               []netip.Prefix `env:"DEVGATE_TRUSTED_PROXY_CIDRS" envSeparator:","`
 }
 
 func (c Config) validate() error {
@@ -82,6 +84,27 @@ func (c Config) validate() error {
 	}
 	if c.UpstreamCircuitOpenTimeout <= 0 {
 		return errors.New("upstream circuit open timeout must be positive")
+	}
+	for _, cidr := range c.TrustedProxyCIDRs {
+		if !cidr.IsValid() {
+			return fmt.Errorf(
+				"trusted proxy CIDR %v is invalid",
+				cidr,
+			)
+		}
+		if cidr != cidr.Masked() {
+			return fmt.Errorf(
+				"trusted proxy CIDR %v must be masked as %v",
+				cidr,
+				cidr.Masked(),
+			)
+		}
+		if cidr.Bits() == 0 {
+			return fmt.Errorf(
+				"trusted proxy CIDR %v must not trust all addresses",
+				cidr,
+			)
+		}
 	}
 	return nil
 }

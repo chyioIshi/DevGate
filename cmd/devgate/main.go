@@ -72,6 +72,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		cfg.UpstreamCircuitOpenTimeout,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
+		cfg.TrustedProxyCIDRs,
 		logger,
 	)
 	if err != nil {

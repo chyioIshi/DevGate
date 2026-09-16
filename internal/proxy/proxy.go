@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
+	"slices"
 
 	"github.com/chyioishi/devgate/internal/requestid"
 )
@@ -23,8 +25,10 @@ func New(
 	transport http.RoundTripper,
 	requestHeaderTransform RequestHeaderTransform,
 	responseHeaderTransform ResponseHeaderTransform,
+	trustedCIDRs []netip.Prefix,
 	logger *slog.Logger,
 ) *httputil.ReverseProxy {
+	trustedCIDRs = slices.Clone(trustedCIDRs)
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -33,6 +37,7 @@ func New(
 				requestHeaderTransform(pr.Out.Header)
 			}
 			pr.SetXForwarded()
+			setXForwardedFor(pr, trustedCIDRs)
 		},
 		ModifyResponse: func(response *http.Response) error {
 			if responseHeaderTransform != nil {
