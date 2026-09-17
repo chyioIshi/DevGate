@@ -23,6 +23,7 @@ type Route struct {
 	Name                string
 	Protocol            Protocol
 	PathPrefix          string
+	Methods             []string
 	UpstreamURL         *url.URL
 	RequestHeaders      *HeaderTransformPolicy
 	ResponseHeaders     *HeaderTransformPolicy
@@ -61,6 +62,23 @@ func (r Route) validate() error {
 			r.PathPrefix,
 		)
 	}
+	seenMethods := make(map[string]struct{}, len(r.Methods))
+	for _, method := range r.Methods {
+		if strings.TrimSpace(method) == "" {
+			return errors.New("HTTP method must not be empty")
+		}
+		if strings.ToUpper(method) != method {
+			return fmt.Errorf("HTTP method must be uppercase: %q", method)
+		}
+		if !httpguts.ValidHeaderFieldName(method) {
+			return fmt.Errorf("invalid HTTP method: %q", method)
+		}
+		if _, exists := seenMethods[method]; exists {
+			return fmt.Errorf("duplicate HTTP method: %q", method)
+		}
+		seenMethods[method] = struct{}{}
+	}
+
 	if r.UpstreamURL == nil {
 		return errors.New("upstream URL must not be nil")
 	}

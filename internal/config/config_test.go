@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -532,7 +533,7 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.LogLevel != want.LogLevel {
 		t.Errorf("Config scalar fields = %+v, want %+v", got, want)
 	}
-	if !slices.Equal(got.Routes, want.Routes) {
+	if !reflect.DeepEqual(got.Routes, want.Routes) {
 		t.Errorf("Config.Routes = %+v, want %+v", got.Routes, want.Routes)
 	}
 	if !slices.Equal(got.TrustedProxyCIDRs, want.TrustedProxyCIDRs) {

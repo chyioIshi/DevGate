@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ routes:
 		t.Fatalf("loadConfigFile() error = %v", err)
 	}
 
-	if !slices.Equal(got.Routes, want) {
+	if !reflect.DeepEqual(got.Routes, want) {
 		t.Errorf("loadConfigFile().Routes = %+v, want %+v", got.Routes, want)
 	}
 }
