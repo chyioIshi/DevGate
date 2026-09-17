@@ -60,7 +60,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	defer recoverPanic(rw, r, h.logger)
 
-	route, ok := h.routeRouter.Match(r.URL.Path)
+	route, ok := h.routeRouter.Match(r.Method, r.URL.Path)
 	if !ok {
 		http.NotFound(rw, r)
 		return
