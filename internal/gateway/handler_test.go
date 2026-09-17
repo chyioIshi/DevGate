@@ -24,6 +24,7 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 			Name:        "api",
 			Protocol:    router.ProtocolHTTP,
 			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
 			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
 		},
 	})
@@ -63,6 +64,63 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 		RequestID: responseRequestID,
 		Status:    http.StatusCreated,
 		Bytes:     int64(recorder.Body.Len()),
+	})
+}
+
+func TestHandlerReturnsMethodNotAllowed(t *testing.T) {
+	logger, logOutput := newTestLogger()
+	routeRouter := mustNewRouter(t, []router.Route{
+		{
+			Name:        "api-read",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
+			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+		},
+		{
+			Name:        "admin-write",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api/admin",
+			Methods:     []string{"POST"},
+			UpstreamURL: mustParseURL(t, "http://admin-write-service:8080"),
+		},
+	})
+	handlerCalled := false
+	handler := gateway.New(
+		routeRouter,
+		map[string]http.Handler{
+			"api-read": http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				handlerCalled = true
+			}),
+			"admin-write": http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				handlerCalled = true
+			}),
+		},
+		logger,
+		metrics.NewHTTP(prometheus.NewRegistry()),
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/users", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+	}
+	if got, want := recorder.Header().Get("Allow"), "GET, POST"; got != want {
+		t.Errorf("Allow header = %q, want %q", got, want)
+	}
+	if handlerCalled {
+		t.Error("route handler was called for a disallowed method")
+	}
+	assertAccessLog(t, logOutput, accessLogRecord{
+		Message: "request completed",
+		Method:  http.MethodPut,
+		Path:    "/api/admin/users",
+		Route:   "unmatched",
+		Status:  http.StatusMethodNotAllowed,
+		Bytes:   int64(recorder.Body.Len()),
 	})
 }
 

@@ -1206,6 +1206,93 @@ func TestRouterMatchNotFound(t *testing.T) {
 	}
 }
 
+func TestRouterAllowedMethods(t *testing.T) {
+	routeRouter, err := New([]Route{
+		{
+			Name:        "api-read",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
+			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+		},
+		{
+			Name:        "admin-write",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api/admin",
+			Methods:     []string{"POST"},
+			UpstreamURL: mustParseURL(t, "http://admin-write-service:8080"),
+		},
+		{
+			Name:        "audit-read",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api/admin/audit",
+			Methods:     []string{"GET"},
+			UpstreamURL: mustParseURL(t, "http://audit-read-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{
+			name: "collects methods from all matching prefixes",
+			path: "/api/admin/audit/events",
+			want: []string{"GET", "POST"},
+		},
+		{
+			name: "matches complete path segments",
+			path: "/apix",
+		},
+		{
+			name: "unmatched path",
+			path: "/orders",
+		},
+		{
+			name: "relative path",
+			path: "api/admin",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := routeRouter.AllowedMethods(test.path)
+			if !slices.Equal(got, test.want) {
+				t.Errorf("AllowedMethods(%q) = %q, want %q", test.path, got, test.want)
+			}
+		})
+	}
+}
+
+func TestRouterAllowedMethodsReturnsNilForWildcardRoute(t *testing.T) {
+	routeRouter, err := New([]Route{
+		{
+			Name:        "fallback",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/",
+			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+		},
+		{
+			Name:        "api-read",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
+			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if got := routeRouter.AllowedMethods("/api/users"); got != nil {
+		t.Errorf("AllowedMethods(%q) = %q, want nil for wildcard route", "/api/users", got)
+	}
+}
+
 func mustParseURL(t *testing.T, rawURL string) *url.URL {
 	t.Helper()
 
