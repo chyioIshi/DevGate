@@ -221,22 +221,108 @@ func TestNew(t *testing.T) {
 			wantMessage: "duplicate route name",
 		},
 		{
-			name: "duplicate route path prefix",
+			name: "same path prefix with disjoint methods",
 			routes: []Route{
 				{
-					Name:        "users-v1",
+					Name:        "get-users",
 					Protocol:    ProtocolHTTP,
 					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					UpstreamURL: mustParseURL(t, "http://users-read-service:8080"),
+				},
+				{
+					Name:        "create-user",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"POST"},
+					UpstreamURL: mustParseURL(t, "http://users-write-service:8080"),
+				},
+			},
+		},
+		{
+			name: "same path prefix with overlapping methods",
+			routes: []Route{
+				{
+					Name:        "read-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET", "HEAD"},
 					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
 				},
 				{
-					Name:        "users-v2",
+					Name:        "other-read-users",
 					Protocol:    ProtocolHTTP,
 					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
 					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
 				},
 			},
-			wantMessage: "duplicate route path prefix",
+			wantMessage: "path prefix",
+		},
+		{
+			name: "method conflicts with non-adjacent route at same path prefix",
+			routes: []Route{
+				{
+					Name:        "first-get-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+				},
+				{
+					Name:        "post-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"POST"},
+					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+				},
+				{
+					Name:        "second-get-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					UpstreamURL: mustParseURL(t, "http://users-v3-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
+		},
+		{
+			name: "wildcard methods conflict with constrained methods",
+			routes: []Route{
+				{
+					Name:        "all-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					UpstreamURL: mustParseURL(t, "http://all-users-service:8080"),
+				},
+				{
+					Name:        "get-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					UpstreamURL: mustParseURL(t, "http://get-users-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
+		},
+		{
+			name: "constrained methods conflict with wildcard methods",
+			routes: []Route{
+				{
+					Name:        "get-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					UpstreamURL: mustParseURL(t, "http://get-users-service:8080"),
+				},
+				{
+					Name:        "all-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					UpstreamURL: mustParseURL(t, "http://all-users-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
 		},
 	}
 
@@ -934,21 +1020,31 @@ func TestRouterMatch(t *testing.T) {
 			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
 		},
 		{
-			Name:        "admin",
+			Name:        "admin-write",
 			Protocol:    ProtocolHTTP,
 			PathPrefix:  "/api/admin",
+			Methods:     []string{"POST"},
 			UpstreamURL: mustParseURL(t, "http://admin-service:8080"),
 		},
 		{
-			Name:        "api",
+			Name:        "api-read",
 			Protocol:    ProtocolHTTP,
 			PathPrefix:  "/api",
-			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			Methods:     []string{"GET"},
+			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+		},
+		{
+			Name:        "api-write",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"POST"},
+			UpstreamURL: mustParseURL(t, "http://api-write-service:8080"),
 		},
 		{
 			Name:        "greeter",
 			Protocol:    ProtocolGRPC,
 			PathPrefix:  "/greeter.v1.Greeter",
+			Methods:     []string{"POST"},
 			UpstreamURL: mustParseURL(t, "http://greeter-service:9090"),
 		},
 	}
@@ -960,46 +1056,73 @@ func TestRouterMatch(t *testing.T) {
 
 	tests := []struct {
 		name          string
+		method        string
 		path          string
 		wantRouteName string
 	}{
 		{
 			name:          "root path uses fallback",
+			method:        http.MethodGet,
 			path:          "/",
 			wantRouteName: "fallback",
 		},
 		{
-			name:          "exact API prefix",
+			name:          "GET uses read route",
+			method:        http.MethodGet,
 			path:          "/api",
-			wantRouteName: "api",
+			wantRouteName: "api-read",
+		},
+		{
+			name:          "POST uses write route at same prefix",
+			method:        http.MethodPost,
+			path:          "/api",
+			wantRouteName: "api-write",
 		},
 		{
 			name:          "API prefix with trailing slash",
+			method:        http.MethodGet,
 			path:          "/api/",
-			wantRouteName: "api",
+			wantRouteName: "api-read",
 		},
 		{
 			name:          "API child path",
+			method:        http.MethodGet,
 			path:          "/api/users",
-			wantRouteName: "api",
+			wantRouteName: "api-read",
 		},
 		{
-			name:          "exact admin prefix uses longer match",
+			name:          "exact admin prefix uses longer method-compatible match",
+			method:        http.MethodPost,
 			path:          "/api/admin",
-			wantRouteName: "admin",
+			wantRouteName: "admin-write",
 		},
 		{
-			name:          "admin child path uses longer match",
+			name:          "admin child path uses longer method-compatible match",
+			method:        http.MethodPost,
 			path:          "/api/admin/users",
-			wantRouteName: "admin",
+			wantRouteName: "admin-write",
+		},
+		{
+			name:          "method mismatch on longer prefix falls back to shorter route",
+			method:        http.MethodGet,
+			path:          "/api/admin/users",
+			wantRouteName: "api-read",
+		},
+		{
+			name:          "method mismatch on constrained routes uses wildcard fallback",
+			method:        http.MethodDelete,
+			path:          "/api/admin/users",
+			wantRouteName: "fallback",
 		},
 		{
 			name:          "similar segment does not match API",
+			method:        http.MethodGet,
 			path:          "/apix",
 			wantRouteName: "fallback",
 		},
 		{
 			name:          "gRPC method path",
+			method:        http.MethodPost,
 			path:          "/greeter.v1.Greeter/SayHello",
 			wantRouteName: "greeter",
 		},
@@ -1007,13 +1130,14 @@ func TestRouterMatch(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, found := router.Match(test.path)
+			got, found := router.Match(test.method, test.path)
 			if !found {
-				t.Fatalf("Match(%q) found = false, want true", test.path)
+				t.Fatalf("Match(%q, %q) found = false, want true", test.method, test.path)
 			}
 			if got.Name != test.wantRouteName {
 				t.Errorf(
-					"Match(%q) route name = %q, want %q",
+					"Match(%q, %q) route name = %q, want %q",
+					test.method,
 					test.path,
 					got.Name,
 					test.wantRouteName,
@@ -1029,6 +1153,7 @@ func TestRouterMatchNotFound(t *testing.T) {
 			Name:        "api",
 			Protocol:    ProtocolHTTP,
 			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
 			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
 		},
 	})
@@ -1037,35 +1162,45 @@ func TestRouterMatchNotFound(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		path string
+		name   string
+		method string
+		path   string
 	}{
 		{
-			name: "unrelated path",
-			path: "/orders",
+			name:   "unrelated path",
+			method: http.MethodGet,
+			path:   "/orders",
 		},
 		{
-			name: "similar segment",
-			path: "/apix",
+			name:   "similar segment",
+			method: http.MethodGet,
+			path:   "/apix",
 		},
 		{
-			name: "case-sensitive path",
-			path: "/API",
+			name:   "case-sensitive path",
+			method: http.MethodGet,
+			path:   "/API",
 		},
 		{
-			name: "relative path",
-			path: "api/users",
+			name:   "relative path",
+			method: http.MethodGet,
+			path:   "api/users",
+		},
+		{
+			name:   "method mismatch",
+			method: http.MethodPost,
+			path:   "/api/users",
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, found := router.Match(test.path)
+			got, found := router.Match(test.method, test.path)
 			if found {
-				t.Errorf("Match(%q) found = true, want false", test.path)
+				t.Errorf("Match(%q, %q) found = true, want false", test.method, test.path)
 			}
 			if !reflect.DeepEqual(got, Route{}) {
-				t.Errorf("Match(%q) route = %+v, want zero Route", test.path, got)
+				t.Errorf("Match(%q, %q) route = %+v, want zero Route", test.method, test.path, got)
 			}
 		})
 	}
