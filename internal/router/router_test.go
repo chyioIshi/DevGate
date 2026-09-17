@@ -4,6 +4,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -23,6 +24,7 @@ func TestNew(t *testing.T) {
 					Name:        "users",
 					Protocol:    ProtocolHTTP,
 					PathPrefix:  "/users",
+					Methods:     []string{"GET", "POST", "PURGE"},
 					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
 				},
 			},
@@ -112,6 +114,58 @@ func TestNew(t *testing.T) {
 				},
 			},
 			wantMessage: "must not end with '/'",
+		},
+		{
+			name: "empty HTTP method",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{""},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "HTTP method must not be empty",
+		},
+		{
+			name: "lowercase HTTP method",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"get"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: `HTTP method must be uppercase: "get"`,
+		},
+		{
+			name: "invalid HTTP method token",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET /"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: `invalid HTTP method: "GET /"`,
+		},
+		{
+			name: "duplicate HTTP method",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET", "GET"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: `duplicate HTTP method: "GET"`,
 		},
 		{
 			name: "nil upstream URL",
@@ -226,6 +280,7 @@ func TestNewCopiesRoutes(t *testing.T) {
 			Name:        "users",
 			Protocol:    ProtocolHTTP,
 			PathPrefix:  "/users",
+			Methods:     []string{"GET"},
 			UpstreamURL: upstreamURL,
 		},
 	}
@@ -241,9 +296,10 @@ func TestNewCopiesRoutes(t *testing.T) {
 		Name:        "users",
 		Protocol:    ProtocolHTTP,
 		PathPrefix:  "/users",
+		Methods:     []string{"GET"},
 		UpstreamURL: upstreamURL,
 	}
-	if got.routes[0] != want {
+	if !reflect.DeepEqual(got.routes[0], want) {
 		t.Errorf("New() copied route = %+v, want %+v", got.routes[0], want)
 	}
 }
@@ -1008,7 +1064,7 @@ func TestRouterMatchNotFound(t *testing.T) {
 			if found {
 				t.Errorf("Match(%q) found = true, want false", test.path)
 			}
-			if got != (Route{}) {
+			if !reflect.DeepEqual(got, Route{}) {
 				t.Errorf("Match(%q) route = %+v, want zero Route", test.path, got)
 			}
 		})

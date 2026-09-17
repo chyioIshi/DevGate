@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			Name:                "users",
 			Protocol:            "http",
 			PathPrefix:          "/api/users",
+			Methods:             []string{"GET", "POST"},
 			UpstreamURL:         "http://users-service:8080",
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
@@ -46,6 +48,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		name                string
 		protocol            router.Protocol
 		pathPrefix          string
+		methods             []string
 		upstreamURL         string
 		requestHeaders      *router.HeaderTransformPolicy
 		responseHeaders     *router.HeaderTransformPolicy
@@ -58,6 +61,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			name:        "users",
 			protocol:    router.ProtocolHTTP,
 			pathPrefix:  "/api/users",
+			methods:     []string{"GET", "POST"},
 			upstreamURL: "http://users-service:8080",
 			requestHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway": "DevGate"},
@@ -100,6 +104,9 @@ func TestRoutesFromConfig(t *testing.T) {
 		}
 		if got[i].PathPrefix != want[i].pathPrefix {
 			t.Errorf("route[%d].PathPrefix = %q, want %q", i, got[i].PathPrefix, want[i].pathPrefix)
+		}
+		if !slices.Equal(got[i].Methods, want[i].methods) {
+			t.Errorf("route[%d].Methods = %q, want %q", i, got[i].Methods, want[i].methods)
 		}
 		if got[i].UpstreamURL == nil {
 			t.Errorf("route[%d].UpstreamURL = nil", i)
@@ -156,6 +163,29 @@ func TestRoutesFromConfig(t *testing.T) {
 				want[i].maxRequestBodyBytes,
 			)
 		}
+	}
+}
+
+func TestRoutesFromConfigCopiesMethods(t *testing.T) {
+	methods := []string{"GET", "POST"}
+	routeConfigs := []config.RouteConfig{
+		{
+			Name:        "users",
+			Protocol:    "http",
+			PathPrefix:  "/api/users",
+			Methods:     methods,
+			UpstreamURL: "http://users-service:8080",
+		},
+	}
+
+	routes, err := routesFromConfig(routeConfigs)
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+
+	methods[0] = "DELETE"
+	if got := routes[0].Methods[0]; got != "GET" {
+		t.Errorf("route method after config mutation = %q, want %q", got, "GET")
 	}
 }
 
