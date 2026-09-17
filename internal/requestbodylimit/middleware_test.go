@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewValidatesArguments(t *testing.T) {
@@ -169,6 +170,101 @@ func TestNewRejectsKnownOversizedBodyBeforeReading(t *testing.T) {
 	}
 	if body.readCalls != 0 {
 		t.Errorf("request body Read() calls = %d, want 0", body.readCalls)
+	}
+}
+
+func TestNewDoesNotBufferRequestBody(t *testing.T) {
+	const (
+		firstChunk        = "first chunk\n"
+		secondChunk       = "second chunk\n"
+		testSignalTimeout = 5 * time.Second
+	)
+
+	firstChunkRead := make(chan struct{})
+	var (
+		gotBody []byte
+		gotErr  error
+	)
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstRead := make([]byte, len(firstChunk))
+		if _, gotErr = io.ReadFull(r.Body, firstRead); gotErr != nil {
+			return
+		}
+		close(firstChunkRead)
+
+		var rest []byte
+		rest, gotErr = io.ReadAll(r.Body)
+		gotBody = append(firstRead, rest...)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler, err := New(next, int64(len(firstChunk)+len(secondChunk)))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	requestBody, requestBodyWriter := io.Pipe()
+	defer requestBodyWriter.Close()
+	request := httptest.NewRequest(http.MethodPost, "/", requestBody)
+	request.ContentLength = -1
+	response := httptest.NewRecorder()
+	handlerDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(response, request)
+		close(handlerDone)
+	}()
+
+	firstWriteCh := make(chan error, 1)
+	go func() {
+		_, writeErr := io.WriteString(requestBodyWriter, firstChunk)
+		firstWriteCh <- writeErr
+	}()
+	select {
+	case err := <-firstWriteCh:
+		if err != nil {
+			t.Fatalf("write first request chunk: %v", err)
+		}
+	case <-time.After(testSignalTimeout):
+		t.Fatal("could not write the first request chunk")
+	}
+
+	select {
+	case <-firstChunkRead:
+	case <-handlerDone:
+		t.Fatalf("downstream handler stopped before reading the first chunk: %v", gotErr)
+	case <-time.After(testSignalTimeout):
+		t.Fatal("request body limit buffered the request before calling the downstream handler")
+	}
+
+	remainingWriteCh := make(chan error, 1)
+	go func() {
+		_, writeErr := io.WriteString(requestBodyWriter, secondChunk)
+		if closeErr := requestBodyWriter.Close(); writeErr == nil {
+			writeErr = closeErr
+		}
+		remainingWriteCh <- writeErr
+	}()
+	select {
+	case err := <-remainingWriteCh:
+		if err != nil {
+			t.Fatalf("write remaining request body: %v", err)
+		}
+	case <-time.After(testSignalTimeout):
+		t.Fatal("could not finish the request body")
+	}
+
+	select {
+	case <-handlerDone:
+	case <-time.After(testSignalTimeout):
+		t.Fatal("request body limit did not finish after the request body was closed")
+	}
+	if gotErr != nil {
+		t.Fatalf("downstream request body read error = %v", gotErr)
+	}
+	if got, want := string(gotBody), firstChunk+secondChunk; got != want {
+		t.Errorf("downstream request body = %q, want %q", got, want)
+	}
+	if response.Code != http.StatusNoContent {
+		t.Errorf("status code = %d, want %d", response.Code, http.StatusNoContent)
 	}
 }
 
