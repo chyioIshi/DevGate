@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/chyioishi/devgate/internal/metrics"
@@ -62,6 +63,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	route, ok := h.routeRouter.Match(r.Method, r.URL.Path)
 	if !ok {
+		allowedMethods := h.routeRouter.AllowedMethods(r.URL.Path)
+		if len(allowedMethods) != 0 {
+			w.Header().Set(
+				"Allow",
+				strings.Join(allowedMethods, ", "),
+			)
+			http.Error(
+				rw,
+				http.StatusText(http.StatusMethodNotAllowed),
+				http.StatusMethodNotAllowed,
+			)
+			return
+		}
 		http.NotFound(rw, r)
 		return
 	}

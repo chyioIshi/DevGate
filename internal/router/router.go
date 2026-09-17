@@ -45,9 +45,7 @@ func (r *Router) Match(method, path string) (Route, bool) {
 	bestMatch := Route{}
 	bestMatchLength := -1
 	for _, route := range r.routes {
-		pathMatches := route.PathPrefix == "/" ||
-			path == route.PathPrefix ||
-			strings.HasPrefix(path, route.PathPrefix+"/")
+		pathMatches := routeMatchesPath(route, path)
 		methodMatches := routeMatchesMethod(route, method)
 		matches := pathMatches && methodMatches
 		if !matches {
@@ -62,6 +60,32 @@ func (r *Router) Match(method, path string) (Route, bool) {
 		return Route{}, false
 	}
 	return bestMatch, true
+}
+
+// AllowedMethods returns the sorted, unique methods configured for routes that
+// match path. It returns nil when the path is invalid or unmatched, or when a
+// matching wildcard route allows every method.
+func (r *Router) AllowedMethods(path string) []string {
+	if !strings.HasPrefix(path, "/") {
+		return nil
+	}
+	allowedMethods := make([]string, 0)
+	for _, route := range r.routes {
+		if routeMatchesPath(route, path) {
+			if len(route.Methods) == 0 {
+				return nil
+			}
+			allowedMethods = append(allowedMethods, route.Methods...)
+		}
+	}
+	slices.Sort(allowedMethods)
+	return slices.Compact(allowedMethods)
+}
+
+func routeMatchesPath(route Route, path string) bool {
+	return route.PathPrefix == "/" ||
+		path == route.PathPrefix ||
+		strings.HasPrefix(path, route.PathPrefix+"/")
 }
 
 func routeMatchesMethod(route Route, method string) bool {
