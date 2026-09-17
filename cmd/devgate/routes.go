@@ -41,6 +41,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			StripPathPrefix:     routeConfig.StripPathPrefix,
 			RequestTimeout:      routeConfig.RequestTimeout,
 			MaxRequestBodyBytes: routeConfig.MaxRequestBodyBytes,
+			Methods:             slices.Clone(routeConfig.Methods),
 		}
 		routes = append(routes, route)
 	}
