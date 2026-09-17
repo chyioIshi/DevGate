@@ -302,6 +302,56 @@ func TestReverseProxyStreamsResponseBody(t *testing.T) {
 	}
 }
 
+func TestReverseProxyForwardsResponseTrailers(t *testing.T) {
+	const (
+		body         = "proxied response body"
+		trailerName  = "X-Upstream-Checksum"
+		trailerValue = "sha256:abc123"
+	)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Trailer", trailerName)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, body)
+		w.Header().Set(trailerName, trailerValue)
+	}))
+	defer upstream.Close()
+
+	targetURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	gateway := httptest.NewServer(New(
+		targetURL,
+		http.DefaultTransport,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+	defer gateway.Close()
+
+	response, err := gateway.Client().Get(gateway.URL)
+	if err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	defer response.Body.Close()
+
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Errorf("response status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if got := string(responseBody); got != body {
+		t.Errorf("response body = %q, want %q", got, body)
+	}
+	if got := response.Trailer.Get(trailerName); got != trailerValue {
+		t.Errorf("response trailer %q = %q, want %q", trailerName, got, trailerValue)
+	}
+}
+
 func TestReverseProxyStreamsRequestBody(t *testing.T) {
 	const (
 		firstChunk        = "first chunk\n"
@@ -424,6 +474,82 @@ func TestReverseProxyStreamsRequestBody(t *testing.T) {
 	}
 	if got, want := string(body), firstChunk+secondChunk; got != want {
 		t.Errorf("response body = %q, want %q", got, want)
+	}
+}
+
+func TestReverseProxyForwardsRequestTrailers(t *testing.T) {
+	const (
+		body         = "proxied request body"
+		trailerName  = "X-Client-Checksum"
+		trailerValue = "sha256:def456"
+	)
+
+	type receivedRequest struct {
+		body    string
+		trailer string
+	}
+	receivedCh := make(chan receivedRequest, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedBody, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read request body", http.StatusBadRequest)
+			return
+		}
+		receivedCh <- receivedRequest{
+			body:    string(receivedBody),
+			trailer: r.Trailer.Get(trailerName),
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	targetURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	gateway := httptest.NewServer(New(
+		targetURL,
+		http.DefaultTransport,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+	defer gateway.Close()
+
+	var request *http.Request
+	requestBody := &eofCallbackReader{
+		reader: strings.NewReader(body),
+		onEOF: func() {
+			request.Trailer.Set(trailerName, trailerValue)
+		},
+	}
+	request, err = http.NewRequest(
+		http.MethodPost,
+		gateway.URL,
+		io.NopCloser(requestBody),
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	request.ContentLength = -1
+	request.Trailer = http.Header{trailerName: nil}
+
+	response, err := gateway.Client().Do(request)
+	if err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Errorf("response status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+
+	received := <-receivedCh
+	if received.body != body {
+		t.Errorf("upstream request body = %q, want %q", received.body, body)
+	}
+	if received.trailer != trailerValue {
+		t.Errorf("upstream request trailer %q = %q, want %q", trailerName, received.trailer, trailerValue)
 	}
 }
 
@@ -801,6 +927,20 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 
 type testTimeoutError struct {
 	timeout bool
+}
+
+type eofCallbackReader struct {
+	reader io.Reader
+	onEOF  func()
+	once   sync.Once
+}
+
+func (r *eofCallbackReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if errors.Is(err, io.EOF) {
+		r.once.Do(r.onEOF)
+	}
+	return n, err
 }
 
 func (e testTimeoutError) Error() string {

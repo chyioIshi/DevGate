@@ -33,6 +33,9 @@ func New(
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(targetURL)
+			// Share the trailer map so values populated at inbound body EOF are
+			// available to the outbound transport.
+			pr.Out.Trailer = pr.In.Trailer
 			if requestHeaderTransform != nil {
 				requestHeaderTransform(pr.Out.Header)
 			}
