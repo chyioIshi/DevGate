@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -181,6 +183,247 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 			got.RequestID,
 			responseRequestID,
 		)
+	}
+}
+
+func TestReverseProxyStreamsResponseBody(t *testing.T) {
+	const (
+		firstChunk        = "first chunk\n"
+		secondChunk       = "second chunk\n"
+		testSignalTimeout = 5 * time.Second
+	)
+
+	firstChunkFlushed := make(chan struct{})
+	releaseUpstream := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseUpstream)
+		})
+	}
+	defer release()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
+		if _, err := io.WriteString(w, firstChunk); err != nil {
+			return
+		}
+		flusher.Flush()
+		close(firstChunkFlushed)
+
+		select {
+		case <-releaseUpstream:
+		case <-r.Context().Done():
+			return
+		}
+
+		_, _ = io.WriteString(w, secondChunk)
+	}))
+	defer upstream.Close()
+
+	targetURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	gateway := httptest.NewServer(New(
+		targetURL,
+		http.DefaultTransport,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+	defer gateway.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gateway.URL, nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+
+	type responseResult struct {
+		response *http.Response
+		err      error
+	}
+	responseCh := make(chan responseResult, 1)
+	go func() {
+		response, requestErr := gateway.Client().Do(request)
+		responseCh <- responseResult{response: response, err: requestErr}
+	}()
+
+	select {
+	case <-firstChunkFlushed:
+	case <-time.After(testSignalTimeout):
+		t.Fatal("upstream did not flush the first response chunk")
+	}
+
+	var response *http.Response
+	select {
+	case result := <-responseCh:
+		if result.err != nil {
+			t.Fatalf("send request: %v", result.err)
+		}
+		response = result.response
+	case <-time.After(testSignalTimeout):
+		t.Fatal("gateway did not forward response headers after upstream flushed first chunk")
+	}
+	defer response.Body.Close()
+
+	firstReadCh := make(chan error, 1)
+	firstRead := make([]byte, len(firstChunk))
+	go func() {
+		_, readErr := io.ReadFull(response.Body, firstRead)
+		firstReadCh <- readErr
+	}()
+
+	select {
+	case err := <-firstReadCh:
+		if err != nil {
+			t.Fatalf("read first response chunk: %v", err)
+		}
+	case <-time.After(testSignalTimeout):
+		t.Fatal("gateway buffered the response body instead of forwarding the first chunk")
+	}
+	if got := string(firstRead); got != firstChunk {
+		t.Errorf("first response chunk = %q, want %q", got, firstChunk)
+	}
+
+	release()
+	rest, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read remaining response body: %v", err)
+	}
+	if got := string(rest); got != secondChunk {
+		t.Errorf("remaining response body = %q, want %q", got, secondChunk)
+	}
+}
+
+func TestReverseProxyStreamsRequestBody(t *testing.T) {
+	const (
+		firstChunk        = "first chunk\n"
+		secondChunk       = "second chunk\n"
+		testSignalTimeout = 5 * time.Second
+	)
+
+	firstChunkRead := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		firstRead := make([]byte, len(firstChunk))
+		if _, err := io.ReadFull(r.Body, firstRead); err != nil {
+			http.Error(w, "read first request chunk", http.StatusBadRequest)
+			return
+		}
+		close(firstChunkRead)
+
+		rest, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read remaining request body", http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(append(firstRead, rest...))
+	}))
+	defer upstream.Close()
+
+	targetURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("parse upstream URL: %v", err)
+	}
+	gateway := httptest.NewServer(New(
+		targetURL,
+		http.DefaultTransport,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	))
+	defer gateway.Close()
+
+	requestBody, requestBodyWriter := io.Pipe()
+	defer requestBodyWriter.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		gateway.URL,
+		requestBody,
+	)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+
+	type responseResult struct {
+		response *http.Response
+		err      error
+	}
+	responseCh := make(chan responseResult, 1)
+	go func() {
+		response, requestErr := gateway.Client().Do(request)
+		responseCh <- responseResult{response: response, err: requestErr}
+	}()
+
+	firstWriteCh := make(chan error, 1)
+	go func() {
+		_, writeErr := io.WriteString(requestBodyWriter, firstChunk)
+		firstWriteCh <- writeErr
+	}()
+	select {
+	case err := <-firstWriteCh:
+		if err != nil {
+			t.Fatalf("write first request chunk: %v", err)
+		}
+	case <-time.After(testSignalTimeout):
+		t.Fatal("client could not send the first request chunk")
+	}
+
+	select {
+	case <-firstChunkRead:
+	case <-time.After(testSignalTimeout):
+		t.Fatal("gateway buffered the request body instead of forwarding the first chunk")
+	}
+
+	remainingWriteCh := make(chan error, 1)
+	go func() {
+		_, writeErr := io.WriteString(requestBodyWriter, secondChunk)
+		if closeErr := requestBodyWriter.Close(); writeErr == nil {
+			writeErr = closeErr
+		}
+		remainingWriteCh <- writeErr
+	}()
+	select {
+	case err := <-remainingWriteCh:
+		if err != nil {
+			t.Fatalf("write remaining request body: %v", err)
+		}
+	case <-time.After(testSignalTimeout):
+		t.Fatal("client could not finish the request body")
+	}
+
+	var response *http.Response
+	select {
+	case result := <-responseCh:
+		if result.err != nil {
+			t.Fatalf("send request: %v", result.err)
+		}
+		response = result.response
+	case <-time.After(testSignalTimeout):
+		t.Fatal("gateway did not return the upstream response")
+	}
+	defer response.Body.Close()
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Errorf("response status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if got, want := string(body), firstChunk+secondChunk; got != want {
+		t.Errorf("response body = %q, want %q", got, want)
 	}
 }
 
