@@ -24,6 +24,7 @@ type Route struct {
 	Protocol            Protocol
 	PathPrefix          string
 	Methods             []string
+	Hosts               []string
 	UpstreamURL         *url.URL
 	RequestHeaders      *HeaderTransformPolicy
 	ResponseHeaders     *HeaderTransformPolicy
@@ -77,6 +78,17 @@ func (r Route) validate() error {
 			return fmt.Errorf("duplicate HTTP method: %q", method)
 		}
 		seenMethods[method] = struct{}{}
+	}
+
+	seenHosts := make(map[string]struct{}, len(r.Hosts))
+	for _, host := range r.Hosts {
+		if err := validateHostname(host); err != nil {
+			return fmt.Errorf("invalid host %q: %w", host, err)
+		}
+		if _, exists := seenHosts[host]; exists {
+			return fmt.Errorf("duplicate host: %q", host)
+		}
+		seenHosts[host] = struct{}{}
 	}
 
 	if r.UpstreamURL == nil {
@@ -230,6 +242,39 @@ func (p RateLimitPolicy) validate() error {
 	}
 	if p.Burst <= 0 {
 		return errors.New("burst must be positive")
+	}
+	return nil
+}
+
+func validateHostname(host string) error {
+	if len(host) > 253 {
+		return errors.New("host cannot exceed 253 characters")
+	}
+	if strings.TrimSpace(host) == "" {
+		return errors.New("host cannot be empty")
+	}
+	if strings.ToLower(host) != host {
+		return errors.New("host must be lowercase")
+	}
+	if strings.HasSuffix(host, ".") {
+		return errors.New("host cannot have a trailing dot")
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if len(label) == 0 {
+			return errors.New("host label cannot be empty")
+		}
+		if len(label) > 63 {
+			return errors.New("host label cannot exceed 63 characters")
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return errors.New("host label cannot start or end with a hyphen")
+		}
+		for _, char := range label {
+			if !((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-') {
+				return errors.New("host label contains invalid character")
+			}
+		}
 	}
 	return nil
 }
