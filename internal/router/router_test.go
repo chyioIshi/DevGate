@@ -397,6 +397,70 @@ func TestNew(t *testing.T) {
 			},
 		},
 		{
+			name: "same path and method with disjoint hosts",
+			routes: []Route{
+				{
+					Name:        "public-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.example.com"},
+					UpstreamURL: mustParseURL(t, "http://public-users-service:8080"),
+				},
+				{
+					Name:        "internal-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.internal"},
+					UpstreamURL: mustParseURL(t, "http://internal-users-service:8080"),
+				},
+			},
+		},
+		{
+			name: "same path with overlapping methods and hosts",
+			routes: []Route{
+				{
+					Name:        "users-v1",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET", "POST"},
+					Hosts:       []string{"api.example.com", "api.internal"},
+					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+				},
+				{
+					Name:        "users-v2",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.internal"},
+					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
+		},
+		{
+			name: "wildcard hosts conflict with constrained hosts for overlapping method",
+			routes: []Route{
+				{
+					Name:        "all-hosts",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					UpstreamURL: mustParseURL(t, "http://all-hosts-service:8080"),
+				},
+				{
+					Name:        "public-host",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.example.com"},
+					UpstreamURL: mustParseURL(t, "http://public-host-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
+		},
+		{
 			name: "same path prefix with overlapping methods",
 			routes: []Route{
 				{
