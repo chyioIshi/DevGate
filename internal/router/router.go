@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 )
@@ -49,17 +50,20 @@ func New(routes []Route) (*Router, error) {
 	return &Router{routes: routerRoutes}, nil
 }
 
-func (r *Router) Match(method, path string) (Route, bool) {
+func (r *Router) Match(method, host, path string) (Route, bool) {
 	if !strings.HasPrefix(path, "/") {
 		return Route{}, false
 	}
+
+	host = normalizeHost(host)
 
 	bestMatch := Route{}
 	bestMatchLength := -1
 	for _, route := range r.routes {
 		pathMatches := routeMatchesPath(route, path)
 		methodMatches := routeMatchesMethod(route, method)
-		matches := pathMatches && methodMatches
+		hostMatches := routeMatchesHost(route, host)
+		matches := pathMatches && methodMatches && hostMatches
 		if !matches {
 			continue
 		}
@@ -75,15 +79,16 @@ func (r *Router) Match(method, path string) (Route, bool) {
 }
 
 // AllowedMethods returns the sorted, unique methods configured for routes that
-// match path. It returns nil when the path is invalid or unmatched, or when a
-// matching wildcard route allows every method.
-func (r *Router) AllowedMethods(path string) []string {
+// match host and path. It returns nil when the path is invalid, the host or path
+// is unmatched, or a matching route allows every method.
+func (r *Router) AllowedMethods(host, path string) []string {
 	if !strings.HasPrefix(path, "/") {
 		return nil
 	}
+	host = normalizeHost(host)
 	allowedMethods := make([]string, 0)
 	for _, route := range r.routes {
-		if routeMatchesPath(route, path) {
+		if routeMatchesPath(route, path) && routeMatchesHost(route, host) {
 			if len(route.Methods) == 0 {
 				return nil
 			}
@@ -106,6 +111,18 @@ func routeMatchesMethod(route Route, method string) bool {
 	}
 	for _, m := range route.Methods {
 		if m == method {
+			return true
+		}
+	}
+	return false
+}
+
+func routeMatchesHost(route Route, host string) bool {
+	if len(route.Hosts) == 0 {
+		return true
+	}
+	for _, h := range route.Hosts {
+		if h == host {
 			return true
 		}
 	}
@@ -142,4 +159,13 @@ func methodSetsOverlap(current, existing []string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeHost(host string) string {
+	host = strings.ToLower(host)
+	hostname, _, err := net.SplitHostPort(host)
+	if err != nil {
+		return host
+	}
+	return hostname
 }
