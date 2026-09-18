@@ -12,7 +12,7 @@ type Router struct {
 
 func New(routes []Route) (*Router, error) {
 	uniqueNames := make(map[string]struct{}, len(routes))
-	methodsByPathPrefix := make(map[string][]string, len(routes))
+	routesByPathPrefix := make(map[string][]Route, len(routes))
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("create router: routes length must be greater than 0")
 	}
@@ -23,14 +23,26 @@ func New(routes []Route) (*Router, error) {
 		if _, exists := uniqueNames[route.Name]; exists {
 			return nil, fmt.Errorf("create router: duplicate route name '%s'", route.Name)
 		}
-		existingMethods, exists := methodsByPathPrefix[route.PathPrefix]
-		if exists && methodSetsOverlap(route.Methods, existingMethods) {
-			return nil, fmt.Errorf(
-				"create router: conflicting methods for route path prefix '%s'",
-				route.PathPrefix,
-			)
+		existingRoutes, exists := routesByPathPrefix[route.PathPrefix]
+		if exists {
+			for _, existingRoute := range existingRoutes {
+				if methodSetsOverlap(
+					route.Methods,
+					existingRoute.Methods,
+				) && hostSetsOverlap(
+					route.Hosts,
+					existingRoute.Hosts,
+				) {
+					return nil, fmt.Errorf(
+						"create router: routes %q and %q have conflicting matchers for path prefix %q",
+						route.Name,
+						existingRoute.Name,
+						route.PathPrefix,
+					)
+				}
+			}
 		}
-		methodsByPathPrefix[route.PathPrefix] = append(slices.Clone(route.Methods), existingMethods...)
+		routesByPathPrefix[route.PathPrefix] = append(existingRoutes, route)
 		uniqueNames[route.Name] = struct{}{}
 	}
 	routerRoutes := slices.Clone(routes)
@@ -94,6 +106,22 @@ func routeMatchesMethod(route Route, method string) bool {
 	}
 	for _, m := range route.Methods {
 		if m == method {
+			return true
+		}
+	}
+	return false
+}
+
+func hostSetsOverlap(current, existing []string) bool {
+	if len(current) == 0 || len(existing) == 0 {
+		return true
+	}
+	set := make(map[string]struct{}, len(current))
+	for _, h := range current {
+		set[h] = struct{}{}
+	}
+	for _, h := range existing {
+		if _, exists := set[h]; exists {
 			return true
 		}
 	}
