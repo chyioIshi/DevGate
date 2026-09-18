@@ -67,6 +67,114 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 	})
 }
 
+func TestHandlerDispatchesByHost(t *testing.T) {
+	routeRouter := mustNewRouter(t, []router.Route{
+		{
+			Name:        "public-api",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
+			Hosts:       []string{"api.example.com"},
+			UpstreamURL: mustParseURL(t, "http://public-api-service:8080"),
+		},
+		{
+			Name:        "internal-api",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
+			Hosts:       []string{"api.internal"},
+			UpstreamURL: mustParseURL(t, "http://internal-api-service:8080"),
+		},
+	})
+	handler := gateway.New(
+		routeRouter,
+		map[string]http.Handler{
+			"public-api": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, "public")
+			}),
+			"internal-api": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, "internal")
+			}),
+		},
+		discardLogger(),
+		metrics.NewHTTP(prometheus.NewRegistry()),
+	)
+
+	tests := []struct {
+		name     string
+		host     string
+		wantBody string
+	}{
+		{
+			name:     "public host is case insensitive and ignores port",
+			host:     "API.EXAMPLE.COM:8443",
+			wantBody: "public",
+		},
+		{
+			name:     "internal host",
+			host:     "api.internal",
+			wantBody: "internal",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+			request.Host = test.host
+
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusOK {
+				t.Errorf("status code = %d, want %d", recorder.Code, http.StatusOK)
+			}
+			if got := recorder.Body.String(); got != test.wantBody {
+				t.Errorf("response body = %q, want %q", got, test.wantBody)
+			}
+		})
+	}
+}
+
+func TestHandlerReturnsNotFoundForUnknownHost(t *testing.T) {
+	routeRouter := mustNewRouter(t, []router.Route{
+		{
+			Name:        "api",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
+			Hosts:       []string{"api.example.com"},
+			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+		},
+	})
+	handlerCalled := false
+	handler := gateway.New(
+		routeRouter,
+		map[string]http.Handler{
+			"api": http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				handlerCalled = true
+			}),
+		},
+		discardLogger(),
+		metrics.NewHTTP(prometheus.NewRegistry()),
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPut, "/api/users", nil)
+	request.Host = "attacker.example"
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+	if got := recorder.Header().Get("Allow"); got != "" {
+		t.Errorf("Allow header = %q, want empty", got)
+	}
+	if handlerCalled {
+		t.Error("route handler was called for an unknown host")
+	}
+}
+
 func TestHandlerReturnsMethodNotAllowed(t *testing.T) {
 	logger, logOutput := newTestLogger()
 	routeRouter := mustNewRouter(t, []router.Route{
