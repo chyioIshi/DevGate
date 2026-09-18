@@ -34,6 +34,8 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			Name:                routeConfig.Name,
 			Protocol:            router.Protocol(routeConfig.Protocol),
 			PathPrefix:          routeConfig.PathPrefix,
+			Methods:             slices.Clone(routeConfig.Methods),
+			Hosts:               slices.Clone(routeConfig.Hosts),
 			UpstreamURL:         upstreamURL,
 			RequestHeaders:      requestHeaders,
 			ResponseHeaders:     responseHeaders,
@@ -41,7 +43,6 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			StripPathPrefix:     routeConfig.StripPathPrefix,
 			RequestTimeout:      routeConfig.RequestTimeout,
 			MaxRequestBodyBytes: routeConfig.MaxRequestBodyBytes,
-			Methods:             slices.Clone(routeConfig.Methods),
 		}
 		routes = append(routes, route)
 	}

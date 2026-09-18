@@ -25,6 +25,7 @@ func TestNew(t *testing.T) {
 					Protocol:    ProtocolHTTP,
 					PathPrefix:  "/users",
 					Methods:     []string{"GET", "POST", "PURGE"},
+					Hosts:       []string{"api.example.com", "api-v1.example.com", "localhost", "127.0.0.1"},
 					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
 				},
 			},
@@ -168,6 +169,162 @@ func TestNew(t *testing.T) {
 			wantMessage: `duplicate HTTP method: "GET"`,
 		},
 		{
+			name: "empty host",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{""},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host cannot be empty",
+		},
+		{
+			name: "uppercase host",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"API.example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host must be lowercase",
+		},
+		{
+			name: "host with port",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.example.com:8443"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "invalid host",
+		},
+		{
+			name: "host with trailing dot",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.example.com."},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host cannot have a trailing dot",
+		},
+		{
+			name: "host with leading dot",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{".example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot be empty",
+		},
+		{
+			name: "host with empty label",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api..example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot be empty",
+		},
+		{
+			name: "host label starts with hyphen",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.-internal.example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot start or end with a hyphen",
+		},
+		{
+			name: "host label ends with hyphen",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api-.internal.example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot start or end with a hyphen",
+		},
+		{
+			name: "host label exceeds maximum length",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{strings.Repeat("a", 64) + ".example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot exceed 63 characters",
+		},
+		{
+			name: "host exceeds maximum length",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 63)},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host cannot exceed 253 characters",
+		},
+		{
+			name: "host contains invalid character",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api_internal.example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label contains invalid character",
+		},
+		{
+			name: "duplicate host",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.example.com", "api.example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: `duplicate host: "api.example.com"`,
+		},
+		{
 			name: "nil upstream URL",
 			routes: []Route{
 				{
@@ -238,6 +395,70 @@ func TestNew(t *testing.T) {
 					UpstreamURL: mustParseURL(t, "http://users-write-service:8080"),
 				},
 			},
+		},
+		{
+			name: "same path and method with disjoint hosts",
+			routes: []Route{
+				{
+					Name:        "public-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.example.com"},
+					UpstreamURL: mustParseURL(t, "http://public-users-service:8080"),
+				},
+				{
+					Name:        "internal-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.internal"},
+					UpstreamURL: mustParseURL(t, "http://internal-users-service:8080"),
+				},
+			},
+		},
+		{
+			name: "same path with overlapping methods and hosts",
+			routes: []Route{
+				{
+					Name:        "users-v1",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET", "POST"},
+					Hosts:       []string{"api.example.com", "api.internal"},
+					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+				},
+				{
+					Name:        "users-v2",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.internal"},
+					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
+		},
+		{
+			name: "wildcard hosts conflict with constrained hosts for overlapping method",
+			routes: []Route{
+				{
+					Name:        "all-hosts",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					UpstreamURL: mustParseURL(t, "http://all-hosts-service:8080"),
+				},
+				{
+					Name:        "public-host",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{"GET"},
+					Hosts:       []string{"api.example.com"},
+					UpstreamURL: mustParseURL(t, "http://public-host-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
 		},
 		{
 			name: "same path prefix with overlapping methods",
@@ -1130,7 +1351,7 @@ func TestRouterMatch(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, found := router.Match(test.method, test.path)
+			got, found := router.Match(test.method, "", test.path)
 			if !found {
 				t.Fatalf("Match(%q, %q) found = false, want true", test.method, test.path)
 			}
@@ -1195,12 +1416,86 @@ func TestRouterMatchNotFound(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, found := router.Match(test.method, test.path)
+			got, found := router.Match(test.method, "", test.path)
 			if found {
 				t.Errorf("Match(%q, %q) found = true, want false", test.method, test.path)
 			}
 			if !reflect.DeepEqual(got, Route{}) {
 				t.Errorf("Match(%q, %q) route = %+v, want zero Route", test.method, test.path, got)
+			}
+		})
+	}
+}
+
+func TestRouterMatchHost(t *testing.T) {
+	routeRouter, err := New([]Route{
+		{
+			Name:        "fallback",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/",
+			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+		},
+		{
+			Name:        "public-users",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/users",
+			Methods:     []string{"GET"},
+			Hosts:       []string{"api.example.com"},
+			UpstreamURL: mustParseURL(t, "http://public-users-service:8080"),
+		},
+		{
+			Name:        "internal-users",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/users",
+			Methods:     []string{"GET"},
+			Hosts:       []string{"api.internal"},
+			UpstreamURL: mustParseURL(t, "http://internal-users-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		host          string
+		wantRouteName string
+	}{
+		{
+			name:          "exact public host",
+			host:          "api.example.com",
+			wantRouteName: "public-users",
+		},
+		{
+			name:          "host is case insensitive and ignores port",
+			host:          "API.EXAMPLE.COM:8443",
+			wantRouteName: "public-users",
+		},
+		{
+			name:          "exact internal host",
+			host:          "api.internal",
+			wantRouteName: "internal-users",
+		},
+		{
+			name:          "unknown host uses wildcard fallback",
+			host:          "attacker.example",
+			wantRouteName: "fallback",
+		},
+		{
+			name:          "similar host uses wildcard fallback",
+			host:          "notapi.example.com",
+			wantRouteName: "fallback",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, found := routeRouter.Match(http.MethodGet, test.host, "/users/42")
+			if !found {
+				t.Fatalf("Match(%q, %q, %q) found = false, want true", http.MethodGet, test.host, "/users/42")
+			}
+			if got.Name != test.wantRouteName {
+				t.Errorf("Match(%q, %q, %q) route name = %q, want %q", http.MethodGet, test.host, "/users/42", got.Name, test.wantRouteName)
 			}
 		})
 	}
@@ -1260,7 +1555,7 @@ func TestRouterAllowedMethods(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := routeRouter.AllowedMethods(test.path)
+			got := routeRouter.AllowedMethods("", test.path)
 			if !slices.Equal(got, test.want) {
 				t.Errorf("AllowedMethods(%q) = %q, want %q", test.path, got, test.want)
 			}
@@ -1288,8 +1583,70 @@ func TestRouterAllowedMethodsReturnsNilForWildcardRoute(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	if got := routeRouter.AllowedMethods("/api/users"); got != nil {
+	if got := routeRouter.AllowedMethods("", "/api/users"); got != nil {
 		t.Errorf("AllowedMethods(%q) = %q, want nil for wildcard route", "/api/users", got)
+	}
+}
+
+func TestRouterAllowedMethodsFiltersByHost(t *testing.T) {
+	routeRouter, err := New([]Route{
+		{
+			Name:        "public-api-read",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"GET"},
+			Hosts:       []string{"api.example.com"},
+			UpstreamURL: mustParseURL(t, "http://public-api-service:8080"),
+		},
+		{
+			Name:        "public-admin-write",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api/admin",
+			Methods:     []string{"POST"},
+			Hosts:       []string{"api.example.com"},
+			UpstreamURL: mustParseURL(t, "http://public-admin-service:8080"),
+		},
+		{
+			Name:        "internal-api",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api",
+			Methods:     []string{"DELETE"},
+			Hosts:       []string{"api.internal"},
+			UpstreamURL: mustParseURL(t, "http://internal-api-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		host string
+		want []string
+	}{
+		{
+			name: "public host with port",
+			host: "API.EXAMPLE.COM:443",
+			want: []string{"GET", "POST"},
+		},
+		{
+			name: "internal host",
+			host: "api.internal",
+			want: []string{"DELETE"},
+		},
+		{
+			name: "unknown host",
+			host: "unknown.example",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := routeRouter.AllowedMethods(test.host, "/api/admin/users")
+			if !slices.Equal(got, test.want) {
+				t.Errorf("AllowedMethods(%q, %q) = %q, want %q", test.host, "/api/admin/users", got, test.want)
+			}
+		})
 	}
 }
 

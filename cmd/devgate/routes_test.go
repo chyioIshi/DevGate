@@ -20,6 +20,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			Protocol:            "http",
 			PathPrefix:          "/api/users",
 			Methods:             []string{"GET", "POST"},
+			Hosts:               []string{"api.example.com", "api.internal"},
 			UpstreamURL:         "http://users-service:8080",
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
@@ -49,6 +50,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		protocol            router.Protocol
 		pathPrefix          string
 		methods             []string
+		hosts               []string
 		upstreamURL         string
 		requestHeaders      *router.HeaderTransformPolicy
 		responseHeaders     *router.HeaderTransformPolicy
@@ -62,6 +64,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			protocol:    router.ProtocolHTTP,
 			pathPrefix:  "/api/users",
 			methods:     []string{"GET", "POST"},
+			hosts:       []string{"api.example.com", "api.internal"},
 			upstreamURL: "http://users-service:8080",
 			requestHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway": "DevGate"},
@@ -107,6 +110,9 @@ func TestRoutesFromConfig(t *testing.T) {
 		}
 		if !slices.Equal(got[i].Methods, want[i].methods) {
 			t.Errorf("route[%d].Methods = %q, want %q", i, got[i].Methods, want[i].methods)
+		}
+		if !slices.Equal(got[i].Hosts, want[i].hosts) {
+			t.Errorf("route[%d].Hosts = %q, want %q", i, got[i].Hosts, want[i].hosts)
 		}
 		if got[i].UpstreamURL == nil {
 			t.Errorf("route[%d].UpstreamURL = nil", i)
@@ -186,6 +192,29 @@ func TestRoutesFromConfigCopiesMethods(t *testing.T) {
 	methods[0] = "DELETE"
 	if got := routes[0].Methods[0]; got != "GET" {
 		t.Errorf("route method after config mutation = %q, want %q", got, "GET")
+	}
+}
+
+func TestRoutesFromConfigCopiesHosts(t *testing.T) {
+	hosts := []string{"api.example.com", "api.internal"}
+	routeConfigs := []config.RouteConfig{
+		{
+			Name:        "users",
+			Protocol:    "http",
+			PathPrefix:  "/api/users",
+			Hosts:       hosts,
+			UpstreamURL: "http://users-service:8080",
+		},
+	}
+
+	routes, err := routesFromConfig(routeConfigs)
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+
+	hosts[0] = "attacker.example"
+	if got := routes[0].Hosts[0]; got != "api.example.com" {
+		t.Errorf("route host after config mutation = %q, want %q", got, "api.example.com")
 	}
 }
 
