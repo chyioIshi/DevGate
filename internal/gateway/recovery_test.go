@@ -71,7 +71,7 @@ func TestHandlerAbortsPanicAfterResponseStarted(t *testing.T) {
 
 	recovered := serveAndRecover(handler, recorder, request)
 
-	if recovered != http.ErrAbortHandler {
+	if recovered != http.ErrAbortHandler { //nolint:errorlint // The handler must panic with the exact net/http sentinel.
 		t.Fatalf("recovered panic = %v, want http.ErrAbortHandler", recovered)
 	}
 	if recorder.Code != http.StatusCreated {
@@ -110,6 +110,7 @@ func TestHandlerPropagatesErrAbortHandler(t *testing.T) {
 
 	recovered := serveAndRecover(handler, recorder, request)
 
+	//nolint:errorlint // The original net/http sentinel must be propagated unchanged.
 	if recovered != http.ErrAbortHandler {
 		t.Fatalf("recovered panic = %v, want http.ErrAbortHandler", recovered)
 	}

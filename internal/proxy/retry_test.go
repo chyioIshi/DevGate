@@ -106,7 +106,7 @@ func TestRetryTransportRoundTripDelegatesToBase(t *testing.T) {
 	}{
 		{
 			name:     "response",
-			response: &http.Response{StatusCode: http.StatusNoContent},
+			response: &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody},
 		},
 		{
 			name: "error",
@@ -127,11 +127,16 @@ func TestRetryTransportRoundTripDelegatesToBase(t *testing.T) {
 			request := &http.Request{}
 
 			response, err := transport.RoundTrip(request)
+			if response != nil {
+				defer func() {
+					_ = response.Body.Close()
+				}()
+			}
 
 			if response != test.response {
 				t.Errorf("RoundTrip() response = %p, want original response %p", response, test.response)
 			}
-			if err != test.err {
+			if !errors.Is(err, test.err) {
 				t.Errorf("RoundTrip() error = %v, want original error %v", err, test.err)
 			}
 			if base.calls != 1 {
@@ -300,8 +305,8 @@ func TestRetryTransportRoundTripAttempts(t *testing.T) {
 	firstErr := errors.New("first attempt failed")
 	secondErr := errors.New("second attempt failed")
 	lastErr := errors.New("last attempt failed")
-	successResponse := &http.Response{StatusCode: http.StatusNoContent}
-	serviceUnavailableResponse := &http.Response{StatusCode: http.StatusServiceUnavailable}
+	successResponse := &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}
+	serviceUnavailableResponse := &http.Response{StatusCode: http.StatusServiceUnavailable, Body: http.NoBody}
 
 	tests := []struct {
 		name        string
@@ -377,11 +382,16 @@ func TestRetryTransportRoundTripAttempts(t *testing.T) {
 			request := &http.Request{Method: test.method}
 
 			response, err := transport.RoundTrip(request)
+			if response != nil {
+				defer func() {
+					_ = response.Body.Close()
+				}()
+			}
 
 			if response != test.wantResp {
 				t.Errorf("RoundTrip() response = %p, want %p", response, test.wantResp)
 			}
-			if err != test.wantErr {
+			if !errors.Is(err, test.wantErr) {
 				t.Errorf("RoundTrip() error = %v, want %v", err, test.wantErr)
 			}
 			if len(base.requests) != test.wantCalls {

@@ -741,7 +741,7 @@ func TestCircuitBreakerRecordOutcomeOpensOnceConcurrently(t *testing.T) {
 }
 
 func TestCircuitBreakerRoundTripForwardsAllowedRequest(t *testing.T) {
-	wantResponse := &http.Response{StatusCode: http.StatusNoContent}
+	wantResponse := &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}
 	base := &recordingRoundTripper{response: wantResponse}
 	transport, err := NewCircuitBreakerTransport(base, 3, time.Minute, noopCircuitBreakerObserver{})
 	if err != nil {
@@ -754,6 +754,9 @@ func TestCircuitBreakerRoundTripForwardsAllowedRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RoundTrip() error = %v", err)
 	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response != wantResponse {
 		t.Errorf("RoundTrip() response = %p, want %p", response, wantResponse)
 	}
@@ -778,6 +781,9 @@ func TestCircuitBreakerRoundTripOpensAfterTransportFailures(t *testing.T) {
 	for attempt := 1; attempt <= 2; attempt++ {
 		response, err := transport.RoundTrip(request)
 		if response != nil {
+			_ = response.Body.Close()
+		}
+		if response != nil {
 			t.Errorf("attempt %d response = %v, want nil", attempt, response)
 		}
 		if !errors.Is(err, upstreamErr) {
@@ -786,6 +792,9 @@ func TestCircuitBreakerRoundTripOpensAfterTransportFailures(t *testing.T) {
 	}
 
 	response, err := transport.RoundTrip(request)
+	if response != nil {
+		_ = response.Body.Close()
+	}
 	if response != nil {
 		t.Errorf("rejected response = %v, want nil", response)
 	}
@@ -804,7 +813,7 @@ func TestCircuitBreakerRoundTripOpensAfterTransportFailures(t *testing.T) {
 }
 
 func TestCircuitBreakerRoundTripCountsServerErrorResponse(t *testing.T) {
-	wantResponse := &http.Response{StatusCode: http.StatusServiceUnavailable}
+	wantResponse := &http.Response{StatusCode: http.StatusServiceUnavailable, Body: http.NoBody}
 	base := &recordingRoundTripper{response: wantResponse}
 	transport, err := NewCircuitBreakerTransport(base, 1, time.Minute, noopCircuitBreakerObserver{})
 	if err != nil {
@@ -817,6 +826,9 @@ func TestCircuitBreakerRoundTripCountsServerErrorResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RoundTrip() error = %v", err)
 	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response != wantResponse {
 		t.Errorf("RoundTrip() response = %p, want %p", response, wantResponse)
 	}
@@ -831,7 +843,7 @@ func TestCircuitBreakerRoundTripCountsServerErrorResponse(t *testing.T) {
 func TestCircuitBreakerRoundTripAllowsAnotherProbeAfterCanceledProbe(t *testing.T) {
 	openedAt := time.Unix(3_000, 0)
 	const openTimeout = 10 * time.Second
-	wantResponse := &http.Response{StatusCode: http.StatusOK}
+	wantResponse := &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
 	base := &sequenceRoundTripper{
 		results: []roundTripResult{
 			{err: context.Canceled},
@@ -860,6 +872,9 @@ func TestCircuitBreakerRoundTripAllowsAnotherProbeAfterCanceledProbe(t *testing.
 
 	response, err := transport.RoundTrip(canceledRequest)
 	if response != nil {
+		_ = response.Body.Close()
+	}
+	if response != nil {
 		t.Errorf("canceled probe response = %v, want nil", response)
 	}
 	if !errors.Is(err, context.Canceled) {
@@ -877,6 +892,9 @@ func TestCircuitBreakerRoundTripAllowsAnotherProbeAfterCanceledProbe(t *testing.
 	if err != nil {
 		t.Fatalf("replacement probe error = %v", err)
 	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response != wantResponse {
 		t.Errorf("replacement probe response = %p, want %p", response, wantResponse)
 	}

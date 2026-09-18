@@ -203,7 +203,9 @@ func TestNewDoesNotBufferRequestBody(t *testing.T) {
 	}
 
 	requestBody, requestBodyWriter := io.Pipe()
-	defer requestBodyWriter.Close()
+	defer func() {
+		_ = requestBodyWriter.Close()
+	}()
 	request := httptest.NewRequest(http.MethodPost, "/", requestBody)
 	request.ContentLength = -1
 	response := httptest.NewRecorder()

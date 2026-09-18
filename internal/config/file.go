@@ -10,7 +10,9 @@ func loadConfigFile(path string) (fileConfig, error) {
 	if err != nil {
 		return fileConfig{}, fmt.Errorf("open config file %q: %w", path, err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 	cfg, err := decodeConfig(file)
 	if err != nil {
 		return fileConfig{}, fmt.Errorf("load config file %q: %w", path, err)

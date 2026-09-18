@@ -195,10 +195,7 @@ func isReservedRequestHeader(name string) bool {
 		"x-request-id":
 		return true
 	}
-	if strings.HasPrefix(lowerName, "x-forwarded-") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(lowerName, "x-forwarded-")
 }
 
 func isReservedResponseHeader(name string) bool {
