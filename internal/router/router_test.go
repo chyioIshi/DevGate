@@ -289,10 +289,15 @@ func TestNew(t *testing.T) {
 			name: "host exceeds maximum length",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 63)},
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts: []string{
+						strings.Repeat("a", 63) + "." +
+							strings.Repeat("b", 63) + "." +
+							strings.Repeat("c", 63) + "." +
+							strings.Repeat("d", 63),
+					},
 					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
 				},
 			},
@@ -1495,7 +1500,14 @@ func TestRouterMatchHost(t *testing.T) {
 				t.Fatalf("Match(%q, %q, %q) found = false, want true", http.MethodGet, test.host, "/users/42")
 			}
 			if got.Name != test.wantRouteName {
-				t.Errorf("Match(%q, %q, %q) route name = %q, want %q", http.MethodGet, test.host, "/users/42", got.Name, test.wantRouteName)
+				t.Errorf(
+					"Match(%q, %q, %q) route name = %q, want %q",
+					http.MethodGet,
+					test.host,
+					"/users/42",
+					got.Name,
+					test.wantRouteName,
+				)
 			}
 		})
 	}

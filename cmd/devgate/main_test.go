@@ -15,7 +15,9 @@ func TestHealthHandler(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	resp := w.Result()
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status code %d, got %d", http.StatusOK, resp.StatusCode)
@@ -40,7 +42,9 @@ func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	resp := w.Result()
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("expected status code %d, got %d", http.StatusMethodNotAllowed, resp.StatusCode)
@@ -73,7 +77,9 @@ func TestMuxRoutesRequestsToProxy(t *testing.T) {
 	mux.ServeHTTP(w, req)
 
 	resp := w.Result()
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("expected status code %d, got %d", http.StatusNoContent, resp.StatusCode)

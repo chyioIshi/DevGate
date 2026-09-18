@@ -83,7 +83,9 @@ func TestGatewayProxiesWebSocketConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial WebSocket through gateway: %v", err)
 	}
-	defer connection.Close()
+	defer func() {
+		_ = connection.Close()
+	}()
 
 	if err := websocket.Message.Send(connection, message); err != nil {
 		t.Fatalf("send WebSocket message: %v", err)

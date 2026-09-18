@@ -363,7 +363,7 @@ func newTestLogger() (*slog.Logger, *bytes.Buffer) {
 }
 
 func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+	return slog.New(slog.DiscardHandler)
 }
 
 func assertAccessLog(t *testing.T, output *bytes.Buffer, want accessLogRecord) {

@@ -37,7 +37,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	const transformRequestID = "transform-controlled-value"
 
 	logger := slog.New(
-		slog.NewTextHandler(io.Discard, nil),
+		slog.DiscardHandler,
 	)
 	receivedCh := make(chan receivedRequest, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(
@@ -107,7 +107,9 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status code = %d, want %d", resp.StatusCode, http.StatusCreated)
@@ -234,7 +236,7 @@ func TestReverseProxyStreamsResponseBody(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	))
 	defer gateway.Close()
 
@@ -251,6 +253,7 @@ func TestReverseProxyStreamsResponseBody(t *testing.T) {
 	}
 	responseCh := make(chan responseResult, 1)
 	go func() {
+		//nolint:bodyclose // Ownership is transferred through responseCh.
 		response, requestErr := gateway.Client().Do(request)
 		responseCh <- responseResult{response: response, err: requestErr}
 	}()
@@ -271,7 +274,9 @@ func TestReverseProxyStreamsResponseBody(t *testing.T) {
 	case <-time.After(testSignalTimeout):
 		t.Fatal("gateway did not forward response headers after upstream flushed first chunk")
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 
 	firstReadCh := make(chan error, 1)
 	firstRead := make([]byte, len(firstChunk))
@@ -327,7 +332,7 @@ func TestReverseProxyForwardsResponseTrailers(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	))
 	defer gateway.Close()
 
@@ -335,7 +340,9 @@ func TestReverseProxyForwardsResponseTrailers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send request: %v", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -388,12 +395,14 @@ func TestReverseProxyStreamsRequestBody(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	))
 	defer gateway.Close()
 
 	requestBody, requestBodyWriter := io.Pipe()
-	defer requestBodyWriter.Close()
+	defer func() {
+		_ = requestBodyWriter.Close()
+	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	request, err := http.NewRequestWithContext(
@@ -412,6 +421,7 @@ func TestReverseProxyStreamsRequestBody(t *testing.T) {
 	}
 	responseCh := make(chan responseResult, 1)
 	go func() {
+		//nolint:bodyclose // Ownership is transferred through responseCh.
 		response, requestErr := gateway.Client().Do(request)
 		responseCh <- responseResult{response: response, err: requestErr}
 	}()
@@ -463,7 +473,9 @@ func TestReverseProxyStreamsRequestBody(t *testing.T) {
 	case <-time.After(testSignalTimeout):
 		t.Fatal("gateway did not return the upstream response")
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -513,7 +525,7 @@ func TestReverseProxyForwardsRequestTrailers(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	))
 	defer gateway.Close()
 
@@ -539,7 +551,9 @@ func TestReverseProxyForwardsRequestTrailers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send request: %v", err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode != http.StatusNoContent {
 		t.Errorf("response status = %d, want %d", response.StatusCode, http.StatusNoContent)
 	}
@@ -567,7 +581,7 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 		transform,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 
 	in := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
@@ -611,7 +625,7 @@ func TestReverseProxyClonesTrustedProxyCIDRs(t *testing.T) {
 		nil,
 		nil,
 		trustedCIDRs,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 
 	trustedCIDRs[0] = netip.MustParsePrefix("192.0.2.0/24")
@@ -668,7 +682,9 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	handler.ServeHTTP(recorder, req)
 
 	resp := recorder.Result()
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)
@@ -794,14 +810,16 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 
 	firstRequest := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	firstRecorder := httptest.NewRecorder()
 	reverseProxy.ServeHTTP(firstRecorder, firstRequest)
 	firstResponse := firstRecorder.Result()
-	defer firstResponse.Body.Close()
+	defer func() {
+		_ = firstResponse.Body.Close()
+	}()
 	if firstResponse.StatusCode != http.StatusBadGateway {
 		t.Errorf(
 			"first response status = %d, want %d",
@@ -814,7 +832,9 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 	secondRecorder := httptest.NewRecorder()
 	reverseProxy.ServeHTTP(secondRecorder, secondRequest)
 	secondResponse := secondRecorder.Result()
-	defer secondResponse.Body.Close()
+	defer func() {
+		_ = secondResponse.Body.Close()
+	}()
 	if secondResponse.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf(
 			"second response status = %d, want %d",
@@ -853,14 +873,16 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	}
 	defer transport.CloseIdleConnections()
 
-	proxy := New(targetURL, transport, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	proxy := New(targetURL, transport, nil, nil, nil, slog.New(slog.DiscardHandler))
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	recorder := httptest.NewRecorder()
 
 	proxy.ServeHTTP(recorder, request)
 
 	response := recorder.Result()
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode != http.StatusGatewayTimeout {
 		t.Errorf(
 			"status code = %d, want %d",
@@ -910,7 +932,7 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	recorder := httptest.NewRecorder()

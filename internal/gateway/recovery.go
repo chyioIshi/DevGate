@@ -13,7 +13,7 @@ func recoverPanic(w *responseWriter, r *http.Request, logger *slog.Logger) {
 	if rec == nil {
 		return
 	}
-	if rec == http.ErrAbortHandler {
+	if rec == http.ErrAbortHandler { //nolint:errorlint // Only the exact net/http sentinel must bypass recovery.
 		panic(rec)
 	}
 	requestID, _ := requestid.FromContext(r.Context())
