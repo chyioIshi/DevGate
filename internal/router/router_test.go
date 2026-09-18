@@ -25,6 +25,7 @@ func TestNew(t *testing.T) {
 					Protocol:    ProtocolHTTP,
 					PathPrefix:  "/users",
 					Methods:     []string{"GET", "POST", "PURGE"},
+					Hosts:       []string{"api.example.com", "api-v1.example.com", "localhost", "127.0.0.1"},
 					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
 				},
 			},
@@ -166,6 +167,162 @@ func TestNew(t *testing.T) {
 				},
 			},
 			wantMessage: `duplicate HTTP method: "GET"`,
+		},
+		{
+			name: "empty host",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{""},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host cannot be empty",
+		},
+		{
+			name: "uppercase host",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"API.example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host must be lowercase",
+		},
+		{
+			name: "host with port",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.example.com:8443"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "invalid host",
+		},
+		{
+			name: "host with trailing dot",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.example.com."},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host cannot have a trailing dot",
+		},
+		{
+			name: "host with leading dot",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{".example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot be empty",
+		},
+		{
+			name: "host with empty label",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api..example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot be empty",
+		},
+		{
+			name: "host label starts with hyphen",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.-internal.example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot start or end with a hyphen",
+		},
+		{
+			name: "host label ends with hyphen",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api-.internal.example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot start or end with a hyphen",
+		},
+		{
+			name: "host label exceeds maximum length",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{strings.Repeat("a", 64) + ".example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label cannot exceed 63 characters",
+		},
+		{
+			name: "host exceeds maximum length",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 63)},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host cannot exceed 253 characters",
+		},
+		{
+			name: "host contains invalid character",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api_internal.example"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "host label contains invalid character",
+		},
+		{
+			name: "duplicate host",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Hosts:       []string{"api.example.com", "api.example.com"},
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: `duplicate host: "api.example.com"`,
 		},
 		{
 			name: "nil upstream URL",

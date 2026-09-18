@@ -16,6 +16,9 @@ routes:
     methods:
       - GET
       - POST
+    hosts:
+      - api.example.com
+      - api.internal
     upstream_url: http://users-service:8080
     strip_path_prefix: true
     request_timeout: 2.5s
@@ -45,6 +48,7 @@ routes:
 			Protocol:            "http",
 			PathPrefix:          "/api/users",
 			Methods:             []string{"GET", "POST"},
+			Hosts:               []string{"api.example.com", "api.internal"},
 			UpstreamURL:         "http://users-service:8080",
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
