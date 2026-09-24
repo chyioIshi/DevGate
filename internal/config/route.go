@@ -7,9 +7,9 @@ type RouteConfig struct {
 	Name                string                 `yaml:"name"`
 	Protocol            string                 `yaml:"protocol"`
 	PathPrefix          string                 `yaml:"path_prefix"`
+	HeaderMatches       []HeaderMatchConfig    `yaml:"header_matches"`
 	Methods             []string               `yaml:"methods"`
 	Hosts               []string               `yaml:"hosts"`
-	HeaderMatches       []HeaderMatchConfig    `yaml:"header_matches"`
 	UpstreamURL         string                 `yaml:"upstream_url"`
 	RateLimit           *RateLimitConfig       `yaml:"rate_limit"`
 	StripPathPrefix     bool                   `yaml:"strip_path_prefix"`

@@ -2,6 +2,9 @@ routes:
   - name: users
     protocol: http
     path_prefix: /api/users
+    header_matches:
+      - name: X-Environment
+        exact: production
     upstream_url: http://users-service:8080
     request_headers:
       set:

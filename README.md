@@ -2,6 +2,29 @@
 
 DevGate is a production-oriented API gateway written in Go.
 
+## Header routing
+
+Routes can require exact values for request headers:
+
+```yaml
+routes:
+  - name: production-users
+    protocol: http
+    path_prefix: /api/users
+    header_matches:
+      - name: X-Environment
+        exact: production
+    upstream_url: http://users-service:8080
+```
+
+Header names are case-insensitive, while values are case-sensitive. All
+configured header matches must succeed. A matched header must be present with
+exactly one value; missing or repeated values do not match. A route without
+`header_matches` accepts any request headers.
+
+Matching uses the incoming request headers and happens before request header
+transformations are applied.
+
 ## Trusted proxies
 
 DevGate does not trust incoming `X-Forwarded-For` headers by default. Configure

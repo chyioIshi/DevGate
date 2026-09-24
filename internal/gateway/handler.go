@@ -61,9 +61,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	defer recoverPanic(rw, r, h.logger)
 
-	route, ok := h.routeRouter.Match(r.Method, r.Host, r.URL.Path)
+	route, ok := h.routeRouter.Match(r.Method, r.Host, r.URL.Path, r.Header)
 	if !ok {
-		allowedMethods := h.routeRouter.AllowedMethods(r.Host, r.URL.Path)
+		allowedMethods := h.routeRouter.AllowedMethods(r.Host, r.URL.Path, r.Header)
 		if len(allowedMethods) != 0 {
 			w.Header().Set(
 				"Allow",

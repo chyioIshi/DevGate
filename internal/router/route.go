@@ -23,9 +23,9 @@ type Route struct {
 	Name                string
 	Protocol            Protocol
 	PathPrefix          string
+	HeaderMatches       []HeaderMatch
 	Methods             []string
 	Hosts               []string
-	HeaderMatches       []HeaderMatch
 	UpstreamURL         *url.URL
 	RequestHeaders      *HeaderTransformPolicy
 	ResponseHeaders     *HeaderTransformPolicy
@@ -310,6 +310,9 @@ func (h HeaderMatch) validate() error {
 	}
 	if !httpguts.ValidHeaderFieldValue(h.Exact) {
 		return fmt.Errorf("invalid value for header %q: %q", h.Name, h.Exact)
+	}
+	if isReservedRequestHeader(h.Name) {
+		return fmt.Errorf("header %q is reserved and cannot be matched", h.Name)
 	}
 	return nil
 }

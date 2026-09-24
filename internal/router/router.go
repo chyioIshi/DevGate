@@ -3,6 +3,7 @@ package router
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"slices"
 	"strings"
 )
@@ -33,6 +34,9 @@ func New(routes []Route) (*Router, error) {
 				) && hostSetsOverlap(
 					route.Hosts,
 					existingRoute.Hosts,
+				) && headerMatchSetsOverlap(
+					route.HeaderMatches,
+					existingRoute.HeaderMatches,
 				) {
 					return nil, fmt.Errorf(
 						"create router: routes %q and %q have conflicting matchers for path prefix %q",
@@ -50,7 +54,7 @@ func New(routes []Route) (*Router, error) {
 	return &Router{routes: routerRoutes}, nil
 }
 
-func (r *Router) Match(method, host, path string) (Route, bool) {
+func (r *Router) Match(method, host, path string, headers http.Header) (Route, bool) {
 	if !strings.HasPrefix(path, "/") {
 		return Route{}, false
 	}
@@ -63,7 +67,8 @@ func (r *Router) Match(method, host, path string) (Route, bool) {
 		pathMatches := routeMatchesPath(route, path)
 		methodMatches := routeMatchesMethod(route, method)
 		hostMatches := routeMatchesHost(route, host)
-		matches := pathMatches && methodMatches && hostMatches
+		headersMatch := routeMatchesHeaders(route, headers)
+		matches := pathMatches && methodMatches && hostMatches && headersMatch
 		if !matches {
 			continue
 		}
@@ -79,16 +84,17 @@ func (r *Router) Match(method, host, path string) (Route, bool) {
 }
 
 // AllowedMethods returns the sorted, unique methods configured for routes that
-// match host and path. It returns nil when the path is invalid, the host or path
-// is unmatched, or a matching route allows every method.
-func (r *Router) AllowedMethods(host, path string) []string {
+// match the host, path, and request headers. It returns nil when the path is
+// invalid, the host, path, or headers are unmatched, or a matching route allows
+// every method.
+func (r *Router) AllowedMethods(host, path string, headers http.Header) []string {
 	if !strings.HasPrefix(path, "/") {
 		return nil
 	}
 	host = normalizeHost(host)
 	allowedMethods := make([]string, 0)
 	for _, route := range r.routes {
-		if routeMatchesPath(route, path) && routeMatchesHost(route, host) {
+		if routeMatchesPath(route, path) && routeMatchesHost(route, host) && routeMatchesHeaders(route, headers) {
 			if len(route.Methods) == 0 {
 				return nil
 			}
@@ -129,6 +135,22 @@ func routeMatchesHost(route Route, host string) bool {
 	return false
 }
 
+func routeMatchesHeaders(route Route, headers http.Header) bool {
+	if len(route.HeaderMatches) == 0 {
+		return true
+	}
+	for _, headerMatch := range route.HeaderMatches {
+		headerValues := headers.Values(headerMatch.Name)
+		if len(headerValues) != 1 {
+			return false
+		}
+		if headerValues[0] != headerMatch.Exact {
+			return false
+		}
+	}
+	return true
+}
+
 func hostSetsOverlap(current, existing []string) bool {
 	if len(current) == 0 || len(existing) == 0 {
 		return true
@@ -159,6 +181,24 @@ func methodSetsOverlap(current, existing []string) bool {
 		}
 	}
 	return false
+}
+
+func headerMatchSetsOverlap(current, existing []HeaderMatch) bool {
+	if len(current) == 0 || len(existing) == 0 {
+		return true
+	}
+	set := make(map[string]string, len(current))
+	for _, currentHeaderMatch := range current {
+		set[strings.ToLower(currentHeaderMatch.Name)] = currentHeaderMatch.Exact
+	}
+	for _, existingHeaderMatch := range existing {
+		if currentHeaderMatch, exists := set[strings.ToLower(existingHeaderMatch.Name)]; exists {
+			if currentHeaderMatch != existingHeaderMatch.Exact {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func normalizeHost(host string) string {
