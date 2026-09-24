@@ -43,6 +43,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			StripPathPrefix:     routeConfig.StripPathPrefix,
 			RequestTimeout:      routeConfig.RequestTimeout,
 			MaxRequestBodyBytes: routeConfig.MaxRequestBodyBytes,
+			HeaderMatches:       headerMatchesFromConfig(routeConfig.HeaderMatches),
 		}
 		routes = append(routes, route)
 	}
@@ -58,4 +59,24 @@ func headerTransformPolicyFromConfig(headerConfig *config.HeaderTransformConfig)
 		Set:    maps.Clone(headerConfig.Set),
 		Remove: slices.Clone(headerConfig.Remove),
 	}
+}
+
+func headerMatchesFromConfig(configHeaderMatches []config.HeaderMatchConfig) []router.HeaderMatch {
+	if len(configHeaderMatches) == 0 {
+		return nil
+	}
+	routeHeaderMatches := make(
+		[]router.HeaderMatch,
+		0,
+		len(configHeaderMatches),
+	)
+	for _, header := range configHeaderMatches {
+		routeHeaderMatch := router.HeaderMatch{
+			Name:  header.Name,
+			Exact: header.Exact,
+		}
+		routeHeaderMatches = append(routeHeaderMatches, routeHeaderMatch)
+	}
+
+	return routeHeaderMatches
 }
