@@ -19,6 +19,11 @@ routes:
     hosts:
       - api.example.com
       - api.internal
+    header_matches:
+      - name: X-Environment
+        exact: production
+      - name: X-API-Version
+        exact: v2
     upstream_url: http://users-service:8080
     strip_path_prefix: true
     request_timeout: 2.5s
@@ -44,11 +49,15 @@ routes:
 `
 	want := []RouteConfig{
 		{
-			Name:                "users",
-			Protocol:            "http",
-			PathPrefix:          "/api/users",
-			Methods:             []string{"GET", "POST"},
-			Hosts:               []string{"api.example.com", "api.internal"},
+			Name:       "users",
+			Protocol:   "http",
+			PathPrefix: "/api/users",
+			Methods:    []string{"GET", "POST"},
+			Hosts:      []string{"api.example.com", "api.internal"},
+			HeaderMatches: []HeaderMatchConfig{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
 			UpstreamURL:         "http://users-service:8080",
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
