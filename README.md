@@ -45,6 +45,39 @@ exactly one value; missing or repeated values do not match. A route without
 Matching uses the incoming request headers and happens before request header
 transformations are applied.
 
+## Route priority
+
+Use `priority` to choose between matching routes with the same path matcher.
+Higher values take precedence, the default is `0`, and negative values are
+allowed:
+
+```yaml
+routes:
+  - name: production-users
+    protocol: http
+    path_prefix: /api/users
+    header_matches:
+      - name: X-Environment
+        exact: production
+    priority: 100
+    upstream_url: http://production-users-service:8080
+
+  - name: default-users
+    protocol: http
+    path_prefix: /api/users
+    priority: 0
+    upstream_url: http://users-service:8080
+```
+
+A request with `X-Environment: production` uses `production-users`; other
+requests use `default-users`. Path specificity is evaluated first: a longer
+matching path wins, and an exact path wins over an equal-length prefix.
+Priority is compared only after those rules.
+
+Routes with the same path matcher, the same priority, and overlapping method,
+host, and header conditions are rejected as ambiguous. Assign different
+priorities when the overlap is intentional.
+
 ## Trusted proxies
 
 DevGate does not trust incoming `X-Forwarded-For` headers by default. Configure

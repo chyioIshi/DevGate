@@ -38,6 +38,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			HeaderMatches:       headerMatchesFromConfig(routeConfig.HeaderMatches),
 			Methods:             slices.Clone(routeConfig.Methods),
 			Hosts:               slices.Clone(routeConfig.Hosts),
+			Priority:            routeConfig.Priority,
 			UpstreamURL:         upstreamURL,
 			RequestHeaders:      requestHeaders,
 			ResponseHeaders:     responseHeaders,
