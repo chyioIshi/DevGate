@@ -110,6 +110,113 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	}
 }
 
+func TestConfiguredHeaderRoutesDispatchToDifferentUpstreams(t *testing.T) {
+	productionUpstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, "production")
+		},
+	))
+	defer productionUpstream.Close()
+
+	stagingUpstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, "staging")
+		},
+	))
+	defer stagingUpstream.Close()
+
+	routes, err := routesFromConfig([]config.RouteConfig{
+		{
+			Name:        "production-users",
+			Protocol:    "http",
+			PathPrefix:  "/api/users",
+			Methods:     []string{http.MethodGet},
+			UpstreamURL: productionUpstream.URL,
+			HeaderMatches: []config.HeaderMatchConfig{
+				{Name: "X-Environment", Exact: "production"},
+			},
+		},
+		{
+			Name:        "staging-users",
+			Protocol:    "http",
+			PathPrefix:  "/api/users",
+			Methods:     []string{http.MethodGet},
+			UpstreamURL: stagingUpstream.URL,
+			HeaderMatches: []config.HeaderMatchConfig{
+				{Name: "X-Environment", Exact: "staging"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+	routeRouter, err := router.New(routes)
+	if err != nil {
+		t.Fatalf("router.New() error = %v", err)
+	}
+	registry := prometheus.NewRegistry()
+	routeHandlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(registry))
+
+	tests := []struct {
+		name       string
+		header     string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "production route",
+			header:     "production",
+			wantStatus: http.StatusCreated,
+			wantBody:   "production",
+		},
+		{
+			name:       "staging route",
+			header:     "staging",
+			wantStatus: http.StatusAccepted,
+			wantBody:   "staging",
+		},
+		{
+			name:       "missing header",
+			wantStatus: http.StatusNotFound,
+			wantBody:   "404 page not found\n",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
+			if test.header != "" {
+				request.Header.Set("X-Environment", test.header)
+			}
+			recorder := httptest.NewRecorder()
+
+			gatewayHandler.ServeHTTP(recorder, request)
+
+			if recorder.Code != test.wantStatus {
+				t.Errorf("status code = %d, want %d", recorder.Code, test.wantStatus)
+			}
+			if got := recorder.Body.String(); got != test.wantBody {
+				t.Errorf("response body = %q, want %q", got, test.wantBody)
+			}
+		})
+	}
+}
+
 func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
 	upstreamRequestIDCh := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(
