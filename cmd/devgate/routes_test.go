@@ -48,11 +48,18 @@ func TestRoutesFromConfig(t *testing.T) {
 			PathPrefix:  "/greeter.v1.Greeter",
 			UpstreamURL: "http://greeter-service:9090",
 		},
+		{
+			Name:        "health",
+			Protocol:    "http",
+			PathExact:   "/healthz",
+			UpstreamURL: "http://health-service:8080",
+		},
 	}
 	want := []struct {
 		name                string
 		protocol            router.Protocol
 		pathPrefix          string
+		pathExact           string
 		methods             []string
 		hosts               []string
 		headerMatches       []router.HeaderMatch
@@ -97,6 +104,12 @@ func TestRoutesFromConfig(t *testing.T) {
 			pathPrefix:  "/greeter.v1.Greeter",
 			upstreamURL: "http://greeter-service:9090",
 		},
+		{
+			name:        "health",
+			protocol:    router.ProtocolHTTP,
+			pathExact:   "/healthz",
+			upstreamURL: "http://health-service:8080",
+		},
 	}
 
 	got, err := routesFromConfig(routeConfigs)
@@ -116,6 +129,9 @@ func TestRoutesFromConfig(t *testing.T) {
 		}
 		if got[i].PathPrefix != want[i].pathPrefix {
 			t.Errorf("route[%d].PathPrefix = %q, want %q", i, got[i].PathPrefix, want[i].pathPrefix)
+		}
+		if got[i].PathExact != want[i].pathExact {
+			t.Errorf("route[%d].PathExact = %q, want %q", i, got[i].PathExact, want[i].pathExact)
 		}
 		if !slices.Equal(got[i].Methods, want[i].methods) {
 			t.Errorf("route[%d].Methods = %q, want %q", i, got[i].Methods, want[i].methods)

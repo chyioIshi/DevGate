@@ -31,6 +31,17 @@ func TestNew(t *testing.T) {
 			},
 		},
 		{
+			name: "valid exact path with trailing slash",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users/",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+		},
+		{
 			name: "valid HTTP gRPC and root routes",
 			routes: []Route{
 				{
@@ -103,6 +114,79 @@ func TestNew(t *testing.T) {
 				},
 			},
 			wantMessage: "must start with '/'",
+		},
+		{
+			name: "missing path matcher",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "either path prefix or exact path must be configured",
+		},
+		{
+			name: "prefix and exact path together",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					PathExact:   "/users/42",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "path prefix and exact path are mutually exclusive",
+		},
+		{
+			name: "whitespace path prefix is configured but invalid",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "   ",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "path prefix",
+		},
+		{
+			name: "exact path without leading slash",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "users",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "exact path",
+		},
+		{
+			name: "whitespace exact path is configured but invalid",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "   ",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "exact path",
+		},
+		{
+			name: "exact path cannot strip prefix",
+			routes: []Route{
+				{
+					Name:            "users",
+					Protocol:        ProtocolHTTP,
+					PathExact:       "/users",
+					StripPathPrefix: true,
+					UpstreamURL:     mustParseURL(t, "http://users-service:8080"),
+				},
+			},
+			wantMessage: "strip path prefix requires a path prefix matcher",
 		},
 		{
 			name: "path prefix with trailing slash",
@@ -442,7 +526,7 @@ func TestNew(t *testing.T) {
 					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
 				},
 			},
-			wantMessage: "path prefix",
+			wantMessage: "conflicting matchers for path",
 		},
 		{
 			name: "wildcard hosts conflict with constrained hosts for overlapping method",
@@ -463,7 +547,7 @@ func TestNew(t *testing.T) {
 					UpstreamURL: mustParseURL(t, "http://public-host-service:8080"),
 				},
 			},
-			wantMessage: "path prefix",
+			wantMessage: "conflicting matchers for path",
 		},
 		{
 			name: "same path prefix with overlapping methods",
@@ -483,7 +567,7 @@ func TestNew(t *testing.T) {
 					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
 				},
 			},
-			wantMessage: "path prefix",
+			wantMessage: "conflicting matchers for path",
 		},
 		{
 			name: "method conflicts with non-adjacent route at same path prefix",
@@ -510,7 +594,7 @@ func TestNew(t *testing.T) {
 					UpstreamURL: mustParseURL(t, "http://users-v3-service:8080"),
 				},
 			},
-			wantMessage: "path prefix",
+			wantMessage: "conflicting matchers for path",
 		},
 		{
 			name: "wildcard methods conflict with constrained methods",
@@ -529,7 +613,7 @@ func TestNew(t *testing.T) {
 					UpstreamURL: mustParseURL(t, "http://get-users-service:8080"),
 				},
 			},
-			wantMessage: "path prefix",
+			wantMessage: "conflicting matchers for path",
 		},
 		{
 			name: "constrained methods conflict with wildcard methods",
@@ -548,7 +632,7 @@ func TestNew(t *testing.T) {
 					UpstreamURL: mustParseURL(t, "http://all-users-service:8080"),
 				},
 			},
-			wantMessage: "path prefix",
+			wantMessage: "conflicting matchers for path",
 		},
 		{
 			name: "same path method and host with disjoint header values",
@@ -683,6 +767,111 @@ func TestNew(t *testing.T) {
 						len(got.routes),
 						len(test.routes),
 					)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestNewValidatesExactPathConflicts(t *testing.T) {
+	tests := []struct {
+		name        string
+		routes      []Route
+		wantMessage string
+	}{
+		{
+			name: "different exact paths are allowed",
+			routes: []Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				},
+				{
+					Name:        "orders",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/orders",
+					UpstreamURL: mustParseURL(t, "http://orders-service:8080"),
+				},
+			},
+		},
+		{
+			name: "same exact path conflicts",
+			routes: []Route{
+				{
+					Name:        "users-v1",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users",
+					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+				},
+				{
+					Name:        "users-v2",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users",
+					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+				},
+			},
+			wantMessage: `conflicting matchers for path "/users"`,
+		},
+		{
+			name: "same exact path with disjoint methods is allowed",
+			routes: []Route{
+				{
+					Name:        "get-users",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users",
+					Methods:     []string{http.MethodGet},
+					UpstreamURL: mustParseURL(t, "http://users-read-service:8080"),
+				},
+				{
+					Name:        "create-user",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users",
+					Methods:     []string{http.MethodPost},
+					UpstreamURL: mustParseURL(t, "http://users-write-service:8080"),
+				},
+			},
+		},
+		{
+			name: "exact and prefix with same path are allowed",
+			routes: []Route{
+				{
+					Name:        "prefix-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					UpstreamURL: mustParseURL(t, "http://prefix-users-service:8080"),
+				},
+				{
+					Name:        "exact-users",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users",
+					UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New(test.routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
 				}
 				return
 			}
@@ -1714,6 +1903,114 @@ func TestRouterMatchHost(t *testing.T) {
 					got.Name,
 					test.wantRouteName,
 				)
+			}
+		})
+	}
+}
+
+func TestRouterMatchPrefersExactPathOverEqualPrefix(t *testing.T) {
+	exactRoute := Route{
+		Name:        "exact-users",
+		Protocol:    ProtocolHTTP,
+		PathExact:   "/users",
+		UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+	}
+	prefixRoute := Route{
+		Name:        "prefix-users",
+		Protocol:    ProtocolHTTP,
+		PathPrefix:  "/users",
+		UpstreamURL: mustParseURL(t, "http://prefix-users-service:8080"),
+	}
+
+	tests := []struct {
+		name   string
+		routes []Route
+	}{
+		{
+			name:   "prefix before exact",
+			routes: []Route{prefixRoute, exactRoute},
+		},
+		{
+			name:   "exact before prefix",
+			routes: []Route{exactRoute, prefixRoute},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routeRouter, err := New(test.routes)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			exactMatch, found := routeRouter.Match(http.MethodGet, "", "/users", nil)
+			if !found {
+				t.Fatal("Match() exact path found = false, want true")
+			}
+			if exactMatch.Name != "exact-users" {
+				t.Errorf("Match() exact path route = %q, want %q", exactMatch.Name, "exact-users")
+			}
+
+			prefixMatch, found := routeRouter.Match(http.MethodGet, "", "/users/42", nil)
+			if !found {
+				t.Fatal("Match() child path found = false, want true")
+			}
+			if prefixMatch.Name != "prefix-users" {
+				t.Errorf("Match() child path route = %q, want %q", prefixMatch.Name, "prefix-users")
+			}
+		})
+	}
+}
+
+func TestRouterMatchExactPathPreservesTrailingSlash(t *testing.T) {
+	routeRouter, err := New([]Route{
+		{
+			Name:        "fallback",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/",
+			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+		},
+		{
+			Name:        "exact-users",
+			Protocol:    ProtocolHTTP,
+			PathExact:   "/users/",
+			UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		path          string
+		wantRouteName string
+	}{
+		{
+			name:          "trailing slash matches exact route",
+			path:          "/users/",
+			wantRouteName: "exact-users",
+		},
+		{
+			name:          "missing trailing slash uses fallback",
+			path:          "/users",
+			wantRouteName: "fallback",
+		},
+		{
+			name:          "child path uses fallback",
+			path:          "/users/42",
+			wantRouteName: "fallback",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, found := routeRouter.Match(http.MethodGet, "", test.path, nil)
+			if !found {
+				t.Fatal("Match() found = false, want true")
+			}
+			if got.Name != test.wantRouteName {
+				t.Errorf("Match() route = %q, want %q", got.Name, test.wantRouteName)
 			}
 		})
 	}

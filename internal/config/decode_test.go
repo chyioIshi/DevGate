@@ -46,6 +46,10 @@ routes:
     protocol: http
     path_prefix: /
     upstream_url: http://frontend-service:8080
+  - name: health
+    protocol: http
+    path_exact: /healthz
+    upstream_url: http://health-service:8080
 `
 	want := []RouteConfig{
 		{
@@ -83,6 +87,12 @@ routes:
 			Protocol:    "http",
 			PathPrefix:  "/",
 			UpstreamURL: "http://frontend-service:8080",
+		},
+		{
+			Name:        "health",
+			Protocol:    "http",
+			PathExact:   "/healthz",
+			UpstreamURL: "http://health-service:8080",
 		},
 	}
 

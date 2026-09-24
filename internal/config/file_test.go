@@ -59,6 +59,12 @@ func TestLoadExampleConfig(t *testing.T) {
 			wantHeaderMatches,
 		)
 	}
+	if len(got.Routes) < 2 {
+		t.Fatalf("example config routes length = %d, want at least 2", len(got.Routes))
+	}
+	if got.Routes[1].PathExact != "/api/status" {
+		t.Errorf("example config exact path = %q, want %q", got.Routes[1].PathExact, "/api/status")
+	}
 
 	requestHeaders := got.Routes[0].RequestHeaders
 	if requestHeaders == nil {

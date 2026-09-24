@@ -110,6 +110,92 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	}
 }
 
+func TestConfiguredExactRouteTakesPrecedenceOverPrefix(t *testing.T) {
+	prefixUpstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "prefix")
+		},
+	))
+	defer prefixUpstream.Close()
+
+	exactUpstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, "exact")
+		},
+	))
+	defer exactUpstream.Close()
+
+	routes, err := routesFromConfig([]config.RouteConfig{
+		{
+			Name:        "prefix-users",
+			Protocol:    "http",
+			PathPrefix:  "/api/users",
+			UpstreamURL: prefixUpstream.URL,
+		},
+		{
+			Name:        "exact-users",
+			Protocol:    "http",
+			PathExact:   "/api/users",
+			UpstreamURL: exactUpstream.URL,
+		},
+	})
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+	routeRouter, err := router.New(routes)
+	if err != nil {
+		t.Fatalf("router.New() error = %v", err)
+	}
+	registry := prometheus.NewRegistry()
+	routeHandlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(registry))
+
+	tests := []struct {
+		name     string
+		path     string
+		wantBody string
+	}{
+		{
+			name:     "exact path uses exact route",
+			path:     "/api/users",
+			wantBody: "exact",
+		},
+		{
+			name:     "child path uses prefix route",
+			path:     "/api/users/42",
+			wantBody: "prefix",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			recorder := httptest.NewRecorder()
+
+			gatewayHandler.ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusOK {
+				t.Errorf("status code = %d, want %d", recorder.Code, http.StatusOK)
+			}
+			if got := recorder.Body.String(); got != test.wantBody {
+				t.Errorf("response body = %q, want %q", got, test.wantBody)
+			}
+		})
+	}
+}
+
 func TestConfiguredHeaderRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	productionUpstream := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, _ *http.Request) {
