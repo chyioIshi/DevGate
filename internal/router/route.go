@@ -23,6 +23,7 @@ type Route struct {
 	Name                string
 	Protocol            Protocol
 	PathPrefix          string
+	HeaderMatches       []HeaderMatch
 	Methods             []string
 	Hosts               []string
 	UpstreamURL         *url.URL
@@ -45,6 +46,12 @@ type HeaderTransformPolicy struct {
 type RateLimitPolicy struct {
 	RequestsPerSecond float64
 	Burst             int
+}
+
+// HeaderMatch defines an exact request header condition for a route.
+type HeaderMatch struct {
+	Name  string
+	Exact string
 }
 
 func (r Route) validate() error {
@@ -124,6 +131,21 @@ func (r Route) validate() error {
 		if err := r.RateLimit.validate(); err != nil {
 			return fmt.Errorf("rate limit policy: %w", err)
 		}
+	}
+
+	seenHeaderMatches := make(map[string]struct{}, len(r.HeaderMatches))
+	for _, headerMatch := range r.HeaderMatches {
+		if err := headerMatch.validate(); err != nil {
+			return fmt.Errorf("header match policy: %w", err)
+		}
+		normalized := strings.ToLower(headerMatch.Name)
+		if _, exists := seenHeaderMatches[normalized]; exists {
+			return fmt.Errorf(
+				"header match policy: duplicate header match for header: %q",
+				normalized,
+			)
+		}
+		seenHeaderMatches[normalized] = struct{}{}
 	}
 	return nil
 }
@@ -272,6 +294,25 @@ func validateHostname(host string) error {
 				return errors.New("host label contains invalid character")
 			}
 		}
+	}
+	return nil
+}
+
+func (h HeaderMatch) validate() error {
+	if strings.TrimSpace(h.Name) == "" {
+		return errors.New("header name cannot be empty")
+	}
+	if strings.TrimSpace(h.Exact) == "" {
+		return errors.New("header value cannot be empty")
+	}
+	if !httpguts.ValidHeaderFieldName(h.Name) {
+		return fmt.Errorf("invalid header name: %q", h.Name)
+	}
+	if !httpguts.ValidHeaderFieldValue(h.Exact) {
+		return fmt.Errorf("invalid value for header %q: %q", h.Name, h.Exact)
+	}
+	if isReservedRequestHeader(h.Name) {
+		return fmt.Errorf("header %q is reserved and cannot be matched", h.Name)
 	}
 	return nil
 }

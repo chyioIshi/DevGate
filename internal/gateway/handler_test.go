@@ -232,6 +232,77 @@ func TestHandlerReturnsMethodNotAllowed(t *testing.T) {
 	})
 }
 
+func TestHandlerClassifiesMethodMismatchAfterHeaderMatching(t *testing.T) {
+	tests := []struct {
+		name      string
+		header    string
+		wantCode  int
+		wantAllow string
+	}{
+		{
+			name:      "matching header returns method not allowed",
+			header:    "production",
+			wantCode:  http.StatusMethodNotAllowed,
+			wantAllow: http.MethodGet,
+		},
+		{
+			name:     "different header returns not found",
+			header:   "staging",
+			wantCode: http.StatusNotFound,
+		},
+		{
+			name:     "missing header returns not found",
+			wantCode: http.StatusNotFound,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routeRouter := mustNewRouter(t, []router.Route{
+				{
+					Name:       "production-api",
+					Protocol:   router.ProtocolHTTP,
+					PathPrefix: "/api",
+					Methods:    []string{http.MethodGet},
+					HeaderMatches: []router.HeaderMatch{
+						{Name: "X-Environment", Exact: "production"},
+					},
+					UpstreamURL: mustParseURL(t, "http://production-api-service:8080"),
+				},
+			})
+			handlerCalled := false
+			handler := gateway.New(
+				routeRouter,
+				map[string]http.Handler{
+					"production-api": http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+						handlerCalled = true
+					}),
+				},
+				discardLogger(),
+				metrics.NewHTTP(prometheus.NewRegistry()),
+			)
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPut, "/api/users", nil)
+			if test.header != "" {
+				request.Header.Set("X-Environment", test.header)
+			}
+
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != test.wantCode {
+				t.Errorf("status code = %d, want %d", recorder.Code, test.wantCode)
+			}
+			if got := recorder.Header().Get("Allow"); got != test.wantAllow {
+				t.Errorf("Allow header = %q, want %q", got, test.wantAllow)
+			}
+			if handlerCalled {
+				t.Error("route handler was called for an unmatched request")
+			}
+		})
+	}
+}
+
 func TestHandlerReturnsNotFoundWhenRouteDoesNotMatch(t *testing.T) {
 	logger, logOutput := newTestLogger()
 	routeRouter := mustNewRouter(t, []router.Route{

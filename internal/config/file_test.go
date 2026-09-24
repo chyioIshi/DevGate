@@ -49,6 +49,17 @@ func TestLoadExampleConfig(t *testing.T) {
 		t.Fatal("example config routes are empty")
 	}
 
+	wantHeaderMatches := []HeaderMatchConfig{
+		{Name: "X-Environment", Exact: "production"},
+	}
+	if !reflect.DeepEqual(got.Routes[0].HeaderMatches, wantHeaderMatches) {
+		t.Errorf(
+			"example config header matches = %+v, want %+v",
+			got.Routes[0].HeaderMatches,
+			wantHeaderMatches,
+		)
+	}
+
 	requestHeaders := got.Routes[0].RequestHeaders
 	if requestHeaders == nil {
 		t.Fatal("example config request headers = nil, want configured policy")

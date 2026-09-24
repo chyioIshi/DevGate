@@ -7,6 +7,7 @@ type RouteConfig struct {
 	Name                string                 `yaml:"name"`
 	Protocol            string                 `yaml:"protocol"`
 	PathPrefix          string                 `yaml:"path_prefix"`
+	HeaderMatches       []HeaderMatchConfig    `yaml:"header_matches"`
 	Methods             []string               `yaml:"methods"`
 	Hosts               []string               `yaml:"hosts"`
 	UpstreamURL         string                 `yaml:"upstream_url"`
@@ -29,6 +30,12 @@ type HeaderTransformConfig struct {
 type RateLimitConfig struct {
 	RequestsPerSecond float64 `yaml:"requests_per_second"`
 	Burst             int     `yaml:"burst"`
+}
+
+// HeaderMatchConfig describes an exact request header condition for a route.
+type HeaderMatchConfig struct {
+	Name  string `yaml:"name"`
+	Exact string `yaml:"exact"`
 }
 
 type fileConfig struct {

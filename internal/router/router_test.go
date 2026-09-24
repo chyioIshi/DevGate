@@ -550,6 +550,121 @@ func TestNew(t *testing.T) {
 			},
 			wantMessage: "path prefix",
 		},
+		{
+			name: "same path method and host with disjoint header values",
+			routes: []Route{
+				{
+					Name:          "production-users",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					Methods:       []string{http.MethodGet},
+					Hosts:         []string{"api.example.com"},
+					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+					UpstreamURL:   mustParseURL(t, "http://production-users-service:8080"),
+				},
+				{
+					Name:          "staging-users",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					Methods:       []string{http.MethodGet},
+					Hosts:         []string{"api.example.com"},
+					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "staging"}},
+					UpstreamURL:   mustParseURL(t, "http://staging-users-service:8080"),
+				},
+			},
+		},
+		{
+			name: "identical header matchers conflict",
+			routes: []Route{
+				{
+					Name:          "users-v1",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					Methods:       []string{http.MethodGet},
+					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+					UpstreamURL:   mustParseURL(t, "http://users-v1-service:8080"),
+				},
+				{
+					Name:          "users-v2",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					Methods:       []string{http.MethodGet},
+					HeaderMatches: []HeaderMatch{{Name: "x-environment", Exact: "production"}},
+					UpstreamURL:   mustParseURL(t, "http://users-v2-service:8080"),
+				},
+			},
+			wantMessage: "conflicting matchers",
+		},
+		{
+			name: "wildcard headers conflict with constrained headers",
+			routes: []Route{
+				{
+					Name:        "all-environments",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Methods:     []string{http.MethodGet},
+					UpstreamURL: mustParseURL(t, "http://all-users-service:8080"),
+				},
+				{
+					Name:          "production-users",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					Methods:       []string{http.MethodGet},
+					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+					UpstreamURL:   mustParseURL(t, "http://production-users-service:8080"),
+				},
+			},
+			wantMessage: "conflicting matchers",
+		},
+		{
+			name: "different header names still conflict",
+			routes: []Route{
+				{
+					Name:          "production-users",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					Methods:       []string{http.MethodGet},
+					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+					UpstreamURL:   mustParseURL(t, "http://production-users-service:8080"),
+				},
+				{
+					Name:          "v2-users",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					Methods:       []string{http.MethodGet},
+					HeaderMatches: []HeaderMatch{{Name: "X-API-Version", Exact: "v2"}},
+					UpstreamURL:   mustParseURL(t, "http://v2-users-service:8080"),
+				},
+			},
+			wantMessage: "conflicting matchers",
+		},
+		{
+			name: "later incompatible shared header makes routes disjoint",
+			routes: []Route{
+				{
+					Name:       "users-v1",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{http.MethodGet},
+					HeaderMatches: []HeaderMatch{
+						{Name: "X-Environment", Exact: "production"},
+						{Name: "X-API-Version", Exact: "v1"},
+					},
+					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+				},
+				{
+					Name:       "users-v2",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{http.MethodGet},
+					HeaderMatches: []HeaderMatch{
+						{Name: "X-Environment", Exact: "production"},
+						{Name: "X-API-Version", Exact: "v2"},
+					},
+					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+				},
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -613,6 +728,97 @@ func TestNewCopiesRoutes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.routes[0], want) {
 		t.Errorf("New() copied route = %+v, want %+v", got.routes[0], want)
+	}
+}
+
+func TestNewValidatesHeaderMatches(t *testing.T) {
+	tests := []struct {
+		name          string
+		headerMatches []HeaderMatch
+		wantMessage   string
+	}{
+		{
+			name: "valid exact matches",
+			headerMatches: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
+		},
+		{
+			name:          "empty header name",
+			headerMatches: []HeaderMatch{{Exact: "production"}},
+			wantMessage:   "header name cannot be empty",
+		},
+		{
+			name:          "invalid header name",
+			headerMatches: []HeaderMatch{{Name: "X Environment", Exact: "production"}},
+			wantMessage:   "invalid header name",
+		},
+		{
+			name:          "empty exact value",
+			headerMatches: []HeaderMatch{{Name: "X-Environment"}},
+			wantMessage:   "header value cannot be empty",
+		},
+		{
+			name:          "invalid exact value",
+			headerMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production\n"}},
+			wantMessage:   "invalid value for header",
+		},
+		{
+			name:          "host header is reserved",
+			headerMatches: []HeaderMatch{{Name: "Host", Exact: "api.example.com"}},
+			wantMessage:   `header "Host" is reserved and cannot be matched`,
+		},
+		{
+			name:          "forwarded header is reserved case insensitively",
+			headerMatches: []HeaderMatch{{Name: "x-forwarded-for", Exact: "192.0.2.1"}},
+			wantMessage:   `header "x-forwarded-for" is reserved and cannot be matched`,
+		},
+		{
+			name: "case-insensitive duplicate header name",
+			headerMatches: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "x-environment", Exact: "staging"},
+			},
+			wantMessage: "duplicate header match",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []Route{
+				{
+					Name:          "users",
+					Protocol:      ProtocolHTTP,
+					PathPrefix:    "/users",
+					HeaderMatches: test.headerMatches,
+					UpstreamURL:   mustParseURL(t, "http://users-service:8080"),
+				},
+			}
+
+			got, err := New(routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			for _, context := range []string{"users", "header match policy", test.wantMessage} {
+				if !strings.Contains(err.Error(), context) {
+					t.Errorf("New() error = %q, want context %q", err, context)
+				}
+			}
+		})
 	}
 }
 
@@ -1356,7 +1562,7 @@ func TestRouterMatch(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, found := router.Match(test.method, "", test.path)
+			got, found := router.Match(test.method, "", test.path, nil)
 			if !found {
 				t.Fatalf("Match(%q, %q) found = false, want true", test.method, test.path)
 			}
@@ -1421,7 +1627,7 @@ func TestRouterMatchNotFound(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, found := router.Match(test.method, "", test.path)
+			got, found := router.Match(test.method, "", test.path, nil)
 			if found {
 				t.Errorf("Match(%q, %q) found = true, want false", test.method, test.path)
 			}
@@ -1495,7 +1701,7 @@ func TestRouterMatchHost(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, found := routeRouter.Match(http.MethodGet, test.host, "/users/42")
+			got, found := routeRouter.Match(http.MethodGet, test.host, "/users/42", nil)
 			if !found {
 				t.Fatalf("Match(%q, %q, %q) found = false, want true", http.MethodGet, test.host, "/users/42")
 			}
@@ -1508,6 +1714,76 @@ func TestRouterMatchHost(t *testing.T) {
 					got.Name,
 					test.wantRouteName,
 				)
+			}
+		})
+	}
+}
+
+func TestRouterMatchHeaders(t *testing.T) {
+	routeRouter, err := New([]Route{
+		{
+			Name:        "fallback",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/",
+			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+		},
+		{
+			Name:       "production-users",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/users",
+			HeaderMatches: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+			},
+			UpstreamURL: mustParseURL(t, "http://production-users-service:8080"),
+		},
+		{
+			Name:       "staging-users",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/users",
+			HeaderMatches: []HeaderMatch{
+				{Name: "X-Environment", Exact: "staging"},
+			},
+			UpstreamURL: mustParseURL(t, "http://staging-users-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		headers       http.Header
+		wantRouteName string
+	}{
+		{
+			name:          "matching header selects constrained route",
+			headers:       http.Header{"X-Environment": []string{"production"}},
+			wantRouteName: "production-users",
+		},
+		{
+			name:          "missing header uses fallback",
+			wantRouteName: "fallback",
+		},
+		{
+			name:          "different exact value selects sibling route",
+			headers:       http.Header{"X-Environment": []string{"staging"}},
+			wantRouteName: "staging-users",
+		},
+		{
+			name:          "unknown value uses fallback",
+			headers:       http.Header{"X-Environment": []string{"development"}},
+			wantRouteName: "fallback",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, found := routeRouter.Match(http.MethodGet, "", "/users/42", test.headers)
+			if !found {
+				t.Fatal("Match() found = false, want true")
+			}
+			if got.Name != test.wantRouteName {
+				t.Errorf("Match() route name = %q, want %q", got.Name, test.wantRouteName)
 			}
 		})
 	}
@@ -1567,7 +1843,7 @@ func TestRouterAllowedMethods(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := routeRouter.AllowedMethods("", test.path)
+			got := routeRouter.AllowedMethods("", test.path, nil)
 			if !slices.Equal(got, test.want) {
 				t.Errorf("AllowedMethods(%q) = %q, want %q", test.path, got, test.want)
 			}
@@ -1595,7 +1871,7 @@ func TestRouterAllowedMethodsReturnsNilForWildcardRoute(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	if got := routeRouter.AllowedMethods("", "/api/users"); got != nil {
+	if got := routeRouter.AllowedMethods("", "/api/users", nil); got != nil {
 		t.Errorf("AllowedMethods(%q) = %q, want nil for wildcard route", "/api/users", got)
 	}
 }
@@ -1654,9 +1930,207 @@ func TestRouterAllowedMethodsFiltersByHost(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := routeRouter.AllowedMethods(test.host, "/api/admin/users")
+			got := routeRouter.AllowedMethods(test.host, "/api/admin/users", nil)
 			if !slices.Equal(got, test.want) {
 				t.Errorf("AllowedMethods(%q, %q) = %q, want %q", test.host, "/api/admin/users", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRouterAllowedMethodsFiltersByHeaders(t *testing.T) {
+	routeRouter, err := New([]Route{
+		{
+			Name:       "production-users",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/users",
+			Methods:    []string{http.MethodGet},
+			HeaderMatches: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+			},
+			UpstreamURL: mustParseURL(t, "http://production-users-service:8080"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		headers http.Header
+		want    []string
+	}{
+		{
+			name:    "matching header returns allowed method",
+			headers: http.Header{"X-Environment": []string{"production"}},
+			want:    []string{http.MethodGet},
+		},
+		{
+			name: "missing header returns no methods",
+		},
+		{
+			name:    "different header value returns no methods",
+			headers: http.Header{"X-Environment": []string{"staging"}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := routeRouter.AllowedMethods("", "/users/42", test.headers)
+			if !slices.Equal(got, test.want) {
+				t.Errorf("AllowedMethods() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRouteMatchesHeaders(t *testing.T) {
+	tests := []struct {
+		name          string
+		headerMatches []HeaderMatch
+		headers       http.Header
+		want          bool
+	}{
+		{
+			name: "route without header constraints",
+			want: true,
+		},
+		{
+			name:          "exact match",
+			headerMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			headers:       http.Header{"X-Environment": []string{"production"}},
+			want:          true,
+		},
+		{
+			name:          "header name is case insensitive",
+			headerMatches: []HeaderMatch{{Name: "x-environment", Exact: "production"}},
+			headers:       http.Header{"X-Environment": []string{"production"}},
+			want:          true,
+		},
+		{
+			name:          "header value is case sensitive",
+			headerMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			headers:       http.Header{"X-Environment": []string{"Production"}},
+		},
+		{
+			name:          "missing header",
+			headerMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+		},
+		{
+			name: "all conditions match",
+			headerMatches: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
+			headers: http.Header{
+				"X-Environment": []string{"production"},
+				"X-Api-Version": []string{"v2"},
+			},
+			want: true,
+		},
+		{
+			name: "one condition does not match",
+			headerMatches: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
+			headers: http.Header{
+				"X-Environment": []string{"production"},
+				"X-Api-Version": []string{"v1"},
+			},
+		},
+		{
+			name:          "multiple values are ambiguous",
+			headerMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			headers:       http.Header{"X-Environment": []string{"production", "staging"}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			route := Route{HeaderMatches: test.headerMatches}
+
+			got := routeMatchesHeaders(route, test.headers)
+
+			if got != test.want {
+				t.Errorf("routeMatchesHeaders() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestHeaderMatchSetsOverlap(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  []HeaderMatch
+		existing []HeaderMatch
+		want     bool
+	}{
+		{
+			name: "unconstrained routes overlap",
+			want: true,
+		},
+		{
+			name:     "wildcard current overlaps constrained existing",
+			existing: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			want:     true,
+		},
+		{
+			name:    "constrained current overlaps wildcard existing",
+			current: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			want:    true,
+		},
+		{
+			name:     "identical conditions overlap",
+			current:  []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			existing: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			want:     true,
+		},
+		{
+			name:     "different header names can coexist",
+			current:  []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			existing: []HeaderMatch{{Name: "X-API-Version", Exact: "v2"}},
+			want:     true,
+		},
+		{
+			name:     "different values for same header are disjoint",
+			current:  []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			existing: []HeaderMatch{{Name: "X-Environment", Exact: "staging"}},
+		},
+		{
+			name: "one shared condition and one independent condition overlap",
+			current: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+			},
+			existing: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
+			want: true,
+		},
+		{
+			name: "later conflicting condition makes sets disjoint",
+			current: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v1"},
+			},
+			existing: []HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
+		},
+		{
+			name:     "header names are case insensitive",
+			current:  []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
+			existing: []HeaderMatch{{Name: "x-environment", Exact: "staging"}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := headerMatchSetsOverlap(test.current, test.existing)
+			if got != test.want {
+				t.Errorf("headerMatchSetsOverlap() = %t, want %t", got, test.want)
 			}
 		})
 	}

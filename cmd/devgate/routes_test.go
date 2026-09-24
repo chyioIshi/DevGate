@@ -16,11 +16,15 @@ import (
 func TestRoutesFromConfig(t *testing.T) {
 	routeConfigs := []config.RouteConfig{
 		{
-			Name:                "users",
-			Protocol:            "http",
-			PathPrefix:          "/api/users",
-			Methods:             []string{"GET", "POST"},
-			Hosts:               []string{"api.example.com", "api.internal"},
+			Name:       "users",
+			Protocol:   "http",
+			PathPrefix: "/api/users",
+			Methods:    []string{"GET", "POST"},
+			Hosts:      []string{"api.example.com", "api.internal"},
+			HeaderMatches: []config.HeaderMatchConfig{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
 			UpstreamURL:         "http://users-service:8080",
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
@@ -51,6 +55,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		pathPrefix          string
 		methods             []string
 		hosts               []string
+		headerMatches       []router.HeaderMatch
 		upstreamURL         string
 		requestHeaders      *router.HeaderTransformPolicy
 		responseHeaders     *router.HeaderTransformPolicy
@@ -60,11 +65,15 @@ func TestRoutesFromConfig(t *testing.T) {
 		maxRequestBodyBytes int64
 	}{
 		{
-			name:        "users",
-			protocol:    router.ProtocolHTTP,
-			pathPrefix:  "/api/users",
-			methods:     []string{"GET", "POST"},
-			hosts:       []string{"api.example.com", "api.internal"},
+			name:       "users",
+			protocol:   router.ProtocolHTTP,
+			pathPrefix: "/api/users",
+			methods:    []string{"GET", "POST"},
+			hosts:      []string{"api.example.com", "api.internal"},
+			headerMatches: []router.HeaderMatch{
+				{Name: "X-Environment", Exact: "production"},
+				{Name: "X-API-Version", Exact: "v2"},
+			},
 			upstreamURL: "http://users-service:8080",
 			requestHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway": "DevGate"},
@@ -113,6 +122,14 @@ func TestRoutesFromConfig(t *testing.T) {
 		}
 		if !slices.Equal(got[i].Hosts, want[i].hosts) {
 			t.Errorf("route[%d].Hosts = %q, want %q", i, got[i].Hosts, want[i].hosts)
+		}
+		if !slices.Equal(got[i].HeaderMatches, want[i].headerMatches) {
+			t.Errorf(
+				"route[%d].HeaderMatches = %+v, want %+v",
+				i,
+				got[i].HeaderMatches,
+				want[i].headerMatches,
+			)
 		}
 		if got[i].UpstreamURL == nil {
 			t.Errorf("route[%d].UpstreamURL = nil", i)
@@ -215,6 +232,31 @@ func TestRoutesFromConfigCopiesHosts(t *testing.T) {
 	hosts[0] = "attacker.example"
 	if got := routes[0].Hosts[0]; got != "api.example.com" {
 		t.Errorf("route host after config mutation = %q, want %q", got, "api.example.com")
+	}
+}
+
+func TestRoutesFromConfigCopiesHeaderMatches(t *testing.T) {
+	headerMatches := []config.HeaderMatchConfig{
+		{Name: "X-Environment", Exact: "production"},
+	}
+	routeConfigs := []config.RouteConfig{
+		{
+			Name:          "users",
+			Protocol:      "http",
+			PathPrefix:    "/api/users",
+			HeaderMatches: headerMatches,
+			UpstreamURL:   "http://users-service:8080",
+		},
+	}
+
+	routes, err := routesFromConfig(routeConfigs)
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+
+	headerMatches[0].Exact = "staging"
+	if got := routes[0].HeaderMatches[0].Exact; got != "production" {
+		t.Errorf("route header match after config mutation = %q, want %q", got, "production")
 	}
 }
 
