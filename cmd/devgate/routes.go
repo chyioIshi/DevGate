@@ -34,6 +34,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			Name:                routeConfig.Name,
 			Protocol:            router.Protocol(routeConfig.Protocol),
 			PathPrefix:          routeConfig.PathPrefix,
+			PathExact:           routeConfig.PathExact,
 			HeaderMatches:       headerMatchesFromConfig(routeConfig.HeaderMatches),
 			Methods:             slices.Clone(routeConfig.Methods),
 			Hosts:               slices.Clone(routeConfig.Hosts),

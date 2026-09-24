@@ -14,7 +14,7 @@ type Router struct {
 
 func New(routes []Route) (*Router, error) {
 	uniqueNames := make(map[string]struct{}, len(routes))
-	routesByPathPrefix := make(map[string][]Route, len(routes))
+	routesByPathMatcher := make(map[pathMatchKey][]Route, len(routes))
 	if len(routes) == 0 {
 		return nil, fmt.Errorf("create router: routes length must be greater than 0")
 	}
@@ -25,7 +25,8 @@ func New(routes []Route) (*Router, error) {
 		if _, exists := uniqueNames[route.Name]; exists {
 			return nil, fmt.Errorf("create router: duplicate route name '%s'", route.Name)
 		}
-		existingRoutes, exists := routesByPathPrefix[route.PathPrefix]
+		routePathMatchKey := pathMatchKeyForRoute(route)
+		existingRoutes, exists := routesByPathMatcher[routePathMatchKey]
 		if exists {
 			for _, existingRoute := range existingRoutes {
 				if methodSetsOverlap(
@@ -39,15 +40,15 @@ func New(routes []Route) (*Router, error) {
 					existingRoute.HeaderMatches,
 				) {
 					return nil, fmt.Errorf(
-						"create router: routes %q and %q have conflicting matchers for path prefix %q",
+						"create router: routes %q and %q have conflicting matchers for path %q",
 						route.Name,
 						existingRoute.Name,
-						route.PathPrefix,
+						routePathMatchKey.path,
 					)
 				}
 			}
 		}
-		routesByPathPrefix[route.PathPrefix] = append(existingRoutes, route)
+		routesByPathMatcher[routePathMatchKey] = append(existingRoutes, route)
 		uniqueNames[route.Name] = struct{}{}
 	}
 	routerRoutes := slices.Clone(routes)
@@ -62,7 +63,7 @@ func (r *Router) Match(method, host, path string, headers http.Header) (Route, b
 	host = normalizeHost(host)
 
 	bestMatch := Route{}
-	bestMatchLength := -1
+	bestMatchPathLength := -1
 	for _, route := range r.routes {
 		pathMatches := routeMatchesPath(route, path)
 		methodMatches := routeMatchesMethod(route, method)
@@ -72,12 +73,21 @@ func (r *Router) Match(method, host, path string, headers http.Header) (Route, b
 		if !matches {
 			continue
 		}
-		if len(route.PathPrefix) > bestMatchLength {
+		candidateIsExact := route.PathExact != ""
+		candidatePathLength := len(route.PathPrefix)
+		if candidateIsExact {
+			candidatePathLength = len(route.PathExact)
+		}
+
+		bestIsExact := bestMatch.PathExact != ""
+		candidateIsBetter := candidatePathLength > bestMatchPathLength ||
+			(candidatePathLength == bestMatchPathLength && candidateIsExact && !bestIsExact)
+		if candidateIsBetter {
 			bestMatch = route
-			bestMatchLength = len(route.PathPrefix)
+			bestMatchPathLength = candidatePathLength
 		}
 	}
-	if bestMatchLength == -1 {
+	if bestMatchPathLength == -1 {
 		return Route{}, false
 	}
 	return bestMatch, true
@@ -105,7 +115,28 @@ func (r *Router) AllowedMethods(host, path string, headers http.Header) []string
 	return slices.Compact(allowedMethods)
 }
 
+type pathMatchKey struct {
+	path string
+	exact bool
+}
+
+func pathMatchKeyForRoute(route Route) pathMatchKey {
+	if route.PathExact != "" {
+		return pathMatchKey{
+			path:  route.PathExact,
+			exact: true,
+		}
+	}
+	return pathMatchKey{
+		path:  route.PathPrefix,
+		exact: false,
+	}
+}
+
 func routeMatchesPath(route Route, path string) bool {
+	if route.PathExact != "" {
+		return path == route.PathExact
+	}
 	return route.PathPrefix == "/" ||
 		path == route.PathPrefix ||
 		strings.HasPrefix(path, route.PathPrefix+"/")
