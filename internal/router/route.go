@@ -23,6 +23,7 @@ type Route struct {
 	Name                string
 	Protocol            Protocol
 	PathPrefix          string
+	PathExact           string
 	HeaderMatches       []HeaderMatch
 	Methods             []string
 	Hosts               []string
@@ -61,14 +62,30 @@ func (r Route) validate() error {
 	if r.Protocol != ProtocolHTTP && r.Protocol != ProtocolGRPC {
 		return fmt.Errorf("unsupported protocol %q", r.Protocol)
 	}
-	if !strings.HasPrefix(r.PathPrefix, "/") {
+
+	hasPathPrefix := r.PathPrefix != ""
+	hasPathExact := r.PathExact != ""
+
+	if hasPathExact && hasPathPrefix {
+		return errors.New("path prefix and exact path are mutually exclusive")
+	}
+	if !hasPathExact && !hasPathPrefix {
+		return errors.New("either path prefix or exact path must be configured")
+	}
+	if hasPathPrefix && !strings.HasPrefix(r.PathPrefix, "/") {
 		return fmt.Errorf("path prefix %q must start with '/'", r.PathPrefix)
 	}
-	if strings.HasSuffix(r.PathPrefix, "/") && r.PathPrefix != "/" {
+	if hasPathPrefix && strings.HasSuffix(r.PathPrefix, "/") && r.PathPrefix != "/" {
 		return fmt.Errorf(
 			"path prefix %q must not end with '/' unless it is '/'",
 			r.PathPrefix,
 		)
+	}
+	if hasPathExact && !strings.HasPrefix(r.PathExact, "/") {
+		return fmt.Errorf("exact path %q must start with '/'", r.PathExact)
+	}
+	if r.StripPathPrefix && !hasPathPrefix {
+		return errors.New("strip path prefix requires a path prefix matcher")
 	}
 	seenMethods := make(map[string]struct{}, len(r.Methods))
 	for _, method := range r.Methods {

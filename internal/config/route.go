@@ -7,6 +7,7 @@ type RouteConfig struct {
 	Name                string                 `yaml:"name"`
 	Protocol            string                 `yaml:"protocol"`
 	PathPrefix          string                 `yaml:"path_prefix"`
+	PathExact           string                 `yaml:"path_exact"`
 	HeaderMatches       []HeaderMatchConfig    `yaml:"header_matches"`
 	Methods             []string               `yaml:"methods"`
 	Hosts               []string               `yaml:"hosts"`

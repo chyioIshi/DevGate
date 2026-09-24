@@ -2,6 +2,26 @@
 
 DevGate is a production-oriented API gateway written in Go.
 
+## Path routing
+
+Each route configures exactly one path matcher. A prefix matcher accepts the
+configured path and its child path segments:
+
+```yaml
+path_prefix: /api/users
+```
+
+It matches `/api/users` and `/api/users/42`, but not `/api/users-v2`. An exact
+matcher accepts only one complete path:
+
+```yaml
+path_exact: /api/status
+```
+
+When an exact matcher and a prefix matcher of the same length both match, the
+exact route takes precedence. `strip_path_prefix` is supported only with
+`path_prefix`.
+
 ## Header routing
 
 Routes can require exact values for request headers:
