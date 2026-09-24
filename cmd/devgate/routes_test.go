@@ -21,6 +21,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			PathPrefix: "/api/users",
 			Methods:    []string{"GET", "POST"},
 			Hosts:      []string{"api.example.com", "api.internal"},
+			Priority:   100,
 			HeaderMatches: []config.HeaderMatchConfig{
 				{Name: "X-Environment", Exact: "production"},
 				{Name: "X-API-Version", Exact: "v2"},
@@ -52,6 +53,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			Name:        "health",
 			Protocol:    "http",
 			PathExact:   "/healthz",
+			Priority:    -10,
 			UpstreamURL: "http://health-service:8080",
 		},
 	}
@@ -63,6 +65,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		methods             []string
 		hosts               []string
 		headerMatches       []router.HeaderMatch
+		priority            int
 		upstreamURL         string
 		requestHeaders      *router.HeaderTransformPolicy
 		responseHeaders     *router.HeaderTransformPolicy
@@ -77,6 +80,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			pathPrefix: "/api/users",
 			methods:    []string{"GET", "POST"},
 			hosts:      []string{"api.example.com", "api.internal"},
+			priority:   100,
 			headerMatches: []router.HeaderMatch{
 				{Name: "X-Environment", Exact: "production"},
 				{Name: "X-API-Version", Exact: "v2"},
@@ -108,6 +112,7 @@ func TestRoutesFromConfig(t *testing.T) {
 			name:        "health",
 			protocol:    router.ProtocolHTTP,
 			pathExact:   "/healthz",
+			priority:    -10,
 			upstreamURL: "http://health-service:8080",
 		},
 	}
@@ -146,6 +151,9 @@ func TestRoutesFromConfig(t *testing.T) {
 				got[i].HeaderMatches,
 				want[i].headerMatches,
 			)
+		}
+		if got[i].Priority != want[i].priority {
+			t.Errorf("route[%d].Priority = %d, want %d", i, got[i].Priority, want[i].priority)
 		}
 		if got[i].UpstreamURL == nil {
 			t.Errorf("route[%d].UpstreamURL = nil", i)

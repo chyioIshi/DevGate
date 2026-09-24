@@ -11,6 +11,7 @@ type RouteConfig struct {
 	HeaderMatches       []HeaderMatchConfig    `yaml:"header_matches"`
 	Methods             []string               `yaml:"methods"`
 	Hosts               []string               `yaml:"hosts"`
+	Priority            int                    `yaml:"priority"`
 	UpstreamURL         string                 `yaml:"upstream_url"`
 	RateLimit           *RateLimitConfig       `yaml:"rate_limit"`
 	StripPathPrefix     bool                   `yaml:"strip_path_prefix"`

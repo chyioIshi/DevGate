@@ -27,6 +27,7 @@ type Route struct {
 	HeaderMatches       []HeaderMatch
 	Methods             []string
 	Hosts               []string
+	Priority            int
 	UpstreamURL         *url.URL
 	RequestHeaders      *HeaderTransformPolicy
 	ResponseHeaders     *HeaderTransformPolicy

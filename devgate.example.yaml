@@ -5,6 +5,7 @@ routes:
     header_matches:
       - name: X-Environment
         exact: production
+    priority: 100
     upstream_url: http://users-service:8080
     request_headers:
       set:

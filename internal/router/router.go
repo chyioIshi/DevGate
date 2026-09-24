@@ -29,6 +29,10 @@ func New(routes []Route) (*Router, error) {
 		existingRoutes, exists := routesByPathMatcher[routePathMatchKey]
 		if exists {
 			for _, existingRoute := range existingRoutes {
+				if route.Priority != existingRoute.Priority {
+					continue
+				}
+
 				if methodSetsOverlap(
 					route.Methods,
 					existingRoute.Methods,
@@ -40,10 +44,11 @@ func New(routes []Route) (*Router, error) {
 					existingRoute.HeaderMatches,
 				) {
 					return nil, fmt.Errorf(
-						"create router: routes %q and %q have conflicting matchers for path %q",
+						"create router: routes %q and %q have conflicting matchers for path %q at priority %d",
 						route.Name,
 						existingRoute.Name,
 						routePathMatchKey.path,
+						route.Priority,
 					)
 				}
 			}
@@ -80,8 +85,19 @@ func (r *Router) Match(method, host, path string, headers http.Header) (Route, b
 		}
 
 		bestIsExact := bestMatch.PathExact != ""
-		candidateIsBetter := candidatePathLength > bestMatchPathLength ||
-			(candidatePathLength == bestMatchPathLength && candidateIsExact && !bestIsExact)
+
+		var candidateIsBetter bool
+		switch {
+		case candidatePathLength > bestMatchPathLength:
+			candidateIsBetter = true
+		case candidatePathLength < bestMatchPathLength:
+			candidateIsBetter = false
+		case candidateIsExact != bestIsExact:
+			candidateIsBetter = candidateIsExact
+		default:
+			candidateIsBetter = route.Priority > bestMatch.Priority
+		}
+
 		if candidateIsBetter {
 			bestMatch = route
 			bestMatchPathLength = candidatePathLength
@@ -116,7 +132,7 @@ func (r *Router) AllowedMethods(host, path string, headers http.Header) []string
 }
 
 type pathMatchKey struct {
-	path string
+	path  string
 	exact bool
 }
 

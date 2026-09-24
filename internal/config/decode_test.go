@@ -19,6 +19,7 @@ routes:
     hosts:
       - api.example.com
       - api.internal
+    priority: 100
     header_matches:
       - name: X-Environment
         exact: production
@@ -49,6 +50,7 @@ routes:
   - name: health
     protocol: http
     path_exact: /healthz
+    priority: -10
     upstream_url: http://health-service:8080
 `
 	want := []RouteConfig{
@@ -58,6 +60,7 @@ routes:
 			PathPrefix: "/api/users",
 			Methods:    []string{"GET", "POST"},
 			Hosts:      []string{"api.example.com", "api.internal"},
+			Priority:   100,
 			HeaderMatches: []HeaderMatchConfig{
 				{Name: "X-Environment", Exact: "production"},
 				{Name: "X-API-Version", Exact: "v2"},
@@ -92,6 +95,7 @@ routes:
 			Name:        "health",
 			Protocol:    "http",
 			PathExact:   "/healthz",
+			Priority:    -10,
 			UpstreamURL: "http://health-service:8080",
 		},
 	}
