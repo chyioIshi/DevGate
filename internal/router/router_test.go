@@ -889,6 +889,75 @@ func TestNewValidatesExactPathConflicts(t *testing.T) {
 	}
 }
 
+func TestNewValidatesRoutePriorities(t *testing.T) {
+	tests := []struct {
+		name        string
+		priorities  [2]int
+		wantMessage string
+	}{
+		{
+			name:       "different positive and default priorities are allowed",
+			priorities: [2]int{100, 0},
+		},
+		{
+			name:       "negative and default priorities are allowed",
+			priorities: [2]int{-10, 0},
+		},
+		{
+			name:        "same positive priority conflicts",
+			priorities:  [2]int{10, 10},
+			wantMessage: `conflicting matchers for path "/users" at priority 10`,
+		},
+		{
+			name:        "same negative priority conflicts",
+			priorities:  [2]int{-10, -10},
+			wantMessage: `conflicting matchers for path "/users" at priority -10`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []Route{
+				{
+					Name:        "users-v1",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Priority:    test.priorities[0],
+					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+				},
+				{
+					Name:        "users-v2",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Priority:    test.priorities[1],
+					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+				},
+			}
+
+			got, err := New(routes)
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
 func TestNewCopiesRoutes(t *testing.T) {
 	upstreamURL := mustParseURL(t, "http://users-service:8080")
 	routes := []Route{
@@ -1957,6 +2026,142 @@ func TestRouterMatchPrefersExactPathOverEqualPrefix(t *testing.T) {
 			}
 			if prefixMatch.Name != "prefix-users" {
 				t.Errorf("Match() child path route = %q, want %q", prefixMatch.Name, "prefix-users")
+			}
+		})
+	}
+}
+
+func TestRouterMatchUsesPriorityAfterPathSpecificity(t *testing.T) {
+	lowPriorityRoute := Route{
+		Name:        "low-priority",
+		Protocol:    ProtocolHTTP,
+		PathPrefix:  "/users",
+		Priority:    0,
+		UpstreamURL: mustParseURL(t, "http://low-priority-service:8080"),
+	}
+	highPriorityRoute := Route{
+		Name:        "high-priority",
+		Protocol:    ProtocolHTTP,
+		PathPrefix:  "/users",
+		Priority:    100,
+		UpstreamURL: mustParseURL(t, "http://high-priority-service:8080"),
+	}
+	headerRoute := Route{
+		Name:       "production-users",
+		Protocol:   ProtocolHTTP,
+		PathPrefix: "/users",
+		HeaderMatches: []HeaderMatch{
+			{Name: "X-Environment", Exact: "production"},
+		},
+		Priority:    100,
+		UpstreamURL: mustParseURL(t, "http://production-users-service:8080"),
+	}
+
+	tests := []struct {
+		name          string
+		routes        []Route
+		path          string
+		headers       http.Header
+		wantRouteName string
+	}{
+		{
+			name:          "higher priority wins when registered last",
+			routes:        []Route{lowPriorityRoute, highPriorityRoute},
+			path:          "/users/42",
+			wantRouteName: "high-priority",
+		},
+		{
+			name:          "higher priority wins when registered first",
+			routes:        []Route{highPriorityRoute, lowPriorityRoute},
+			path:          "/users/42",
+			wantRouteName: "high-priority",
+		},
+		{
+			name: "default priority wins over negative priority",
+			routes: []Route{
+				lowPriorityRoute,
+				{
+					Name:        "negative-priority",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Priority:    -10,
+					UpstreamURL: mustParseURL(t, "http://negative-priority-service:8080"),
+				},
+			},
+			path:          "/users/42",
+			wantRouteName: "low-priority",
+		},
+		{
+			name: "longer path wins over higher priority",
+			routes: []Route{
+				{
+					Name:        "specific-users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/api/users",
+					Priority:    -100,
+					UpstreamURL: mustParseURL(t, "http://specific-users-service:8080"),
+				},
+				{
+					Name:        "high-priority-api",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/api",
+					Priority:    1_000,
+					UpstreamURL: mustParseURL(t, "http://high-priority-api-service:8080"),
+				},
+			},
+			path:          "/api/users/42",
+			wantRouteName: "specific-users",
+		},
+		{
+			name: "exact path wins over higher priority prefix",
+			routes: []Route{
+				{
+					Name:        "exact-users",
+					Protocol:    ProtocolHTTP,
+					PathExact:   "/users",
+					Priority:    -100,
+					UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+				},
+				{
+					Name:        "high-priority-prefix",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/users",
+					Priority:    1_000,
+					UpstreamURL: mustParseURL(t, "http://high-priority-prefix-service:8080"),
+				},
+			},
+			path:          "/users",
+			wantRouteName: "exact-users",
+		},
+		{
+			name:          "matching header route wins by priority",
+			routes:        []Route{lowPriorityRoute, headerRoute},
+			path:          "/users/42",
+			headers:       http.Header{"X-Environment": []string{"production"}},
+			wantRouteName: "production-users",
+		},
+		{
+			name:          "wildcard route handles unmatched header",
+			routes:        []Route{lowPriorityRoute, headerRoute},
+			path:          "/users/42",
+			headers:       http.Header{"X-Environment": []string{"staging"}},
+			wantRouteName: "low-priority",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routeRouter, err := New(test.routes)
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			got, found := routeRouter.Match(http.MethodGet, "", test.path, test.headers)
+			if !found {
+				t.Fatal("Match() found = false, want true")
+			}
+			if got.Name != test.wantRouteName {
+				t.Errorf("Match() route = %q, want %q", got.Name, test.wantRouteName)
 			}
 		})
 	}
