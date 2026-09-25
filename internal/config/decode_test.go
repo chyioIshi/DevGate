@@ -52,6 +52,11 @@ routes:
     path_exact: /healthz
     priority: -10
     upstream_url: http://health-service:8080
+  - name: maintenance
+    path_prefix: /api
+    direct_response:
+      status: 503
+      body: service temporarily unavailable
 `
 	want := []RouteConfig{
 		{
@@ -97,6 +102,14 @@ routes:
 			PathExact:   "/healthz",
 			Priority:    -10,
 			UpstreamURL: "http://health-service:8080",
+		},
+		{
+			Name:       "maintenance",
+			PathPrefix: "/api",
+			DirectResponse: &DirectResponseConfig{
+				StatusCode: 503,
+				Body:       "service temporarily unavailable",
+			},
 		},
 	}
 
@@ -212,6 +225,31 @@ routes:
 		t.Errorf("decodeConfig() error = %q, want decoding context", err)
 	}
 	if !strings.Contains(err.Error(), "unknown field") {
+		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownDirectResponseField(t *testing.T) {
+	input := `
+routes:
+  - name: maintenance
+    path_prefix: /api
+    direct_response:
+      status: 503
+      payload: service temporarily unavailable
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want unknown field error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "decode YAML config") {
+		t.Errorf("decodeConfig() error = %q, want decoding context", err)
+	}
+	if !strings.Contains(err.Error(), `unknown field "payload"`) {
 		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
 	}
 }

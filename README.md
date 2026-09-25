@@ -78,6 +78,33 @@ Routes with the same path matcher, the same priority, and overlapping method,
 host, and header conditions are rejected as ambiguous. Assign different
 priorities when the overlap is intentional.
 
+## Direct responses
+
+A route can return a static HTTP response without forwarding the request to an
+upstream:
+
+```yaml
+routes:
+  - name: maintenance
+    path_prefix: /api
+    direct_response:
+      status: 503
+      body: service temporarily unavailable
+    response_headers:
+      set:
+        Retry-After: "120"
+```
+
+Each route configures exactly one action: either `upstream_url` or
+`direct_response`. The `protocol` field applies only to upstream routes and
+must be omitted for a direct response.
+
+Direct-response status codes must be between `200` and `599`. Responses with
+status `204`, `205`, or `304` cannot configure a body. Response-header
+transformations and rate limiting remain available, while proxy-only settings
+such as request-header transformations, path-prefix stripping, request
+timeouts, and request-body limits are rejected.
+
 ## Trusted proxies
 
 DevGate does not trust incoming `X-Forwarded-For` headers by default. Configure

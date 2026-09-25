@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
 	"reflect"
 	"slices"
@@ -56,6 +57,14 @@ func TestRoutesFromConfig(t *testing.T) {
 			Priority:    -10,
 			UpstreamURL: "http://health-service:8080",
 		},
+		{
+			Name:       "maintenance",
+			PathPrefix: "/api",
+			DirectResponse: &config.DirectResponseConfig{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       "service temporarily unavailable",
+			},
+		},
 	}
 	want := []struct {
 		name                string
@@ -67,6 +76,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		headerMatches       []router.HeaderMatch
 		priority            int
 		upstreamURL         string
+		directResponse      *router.DirectResponse
 		requestHeaders      *router.HeaderTransformPolicy
 		responseHeaders     *router.HeaderTransformPolicy
 		rateLimit           *router.RateLimitPolicy
@@ -115,6 +125,14 @@ func TestRoutesFromConfig(t *testing.T) {
 			priority:    -10,
 			upstreamURL: "http://health-service:8080",
 		},
+		{
+			name:       "maintenance",
+			pathPrefix: "/api",
+			directResponse: &router.DirectResponse{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       "service temporarily unavailable",
+			},
+		},
 	}
 
 	got, err := routesFromConfig(routeConfigs)
@@ -155,16 +173,28 @@ func TestRoutesFromConfig(t *testing.T) {
 		if got[i].Priority != want[i].priority {
 			t.Errorf("route[%d].Priority = %d, want %d", i, got[i].Priority, want[i].priority)
 		}
-		if got[i].UpstreamURL == nil {
-			t.Errorf("route[%d].UpstreamURL = nil", i)
-			continue
+		if want[i].upstreamURL == "" {
+			if got[i].UpstreamURL != nil {
+				t.Errorf("route[%d].UpstreamURL = %q, want nil", i, got[i].UpstreamURL)
+			}
+		} else {
+			if got[i].UpstreamURL == nil {
+				t.Errorf("route[%d].UpstreamURL = nil, want %q", i, want[i].upstreamURL)
+			} else if got[i].UpstreamURL.String() != want[i].upstreamURL {
+				t.Errorf(
+					"route[%d].UpstreamURL = %q, want %q",
+					i,
+					got[i].UpstreamURL,
+					want[i].upstreamURL,
+				)
+			}
 		}
-		if got[i].UpstreamURL.String() != want[i].upstreamURL {
+		if !reflect.DeepEqual(got[i].DirectResponse, want[i].directResponse) {
 			t.Errorf(
-				"route[%d].UpstreamURL = %q, want %q",
+				"route[%d].DirectResponse = %+v, want %+v",
 				i,
-				got[i].UpstreamURL,
-				want[i].upstreamURL,
+				got[i].DirectResponse,
+				want[i].directResponse,
 			)
 		}
 		if !reflect.DeepEqual(got[i].RateLimit, want[i].rateLimit) {

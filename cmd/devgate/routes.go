@@ -13,9 +13,20 @@ import (
 func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error) {
 	routes := make([]router.Route, 0, len(routeConfigs))
 	for _, routeConfig := range routeConfigs {
-		upstreamURL, err := url.Parse(routeConfig.UpstreamURL)
-		if err != nil {
-			return nil, fmt.Errorf("parse upstream URL for route %q: %w", routeConfig.Name, err)
+		var upstreamURL *url.URL
+		var err error
+		if routeConfig.UpstreamURL != "" {
+			upstreamURL, err = url.Parse(routeConfig.UpstreamURL)
+			if err != nil {
+				return nil, fmt.Errorf("parse upstream URL for route %q: %w", routeConfig.Name, err)
+			}
+		}
+		var directResponse *router.DirectResponse
+		if routeConfig.DirectResponse != nil {
+			directResponse = &router.DirectResponse{
+				StatusCode: routeConfig.DirectResponse.StatusCode,
+				Body:       routeConfig.DirectResponse.Body,
+			}
 		}
 		requestHeaders := headerTransformPolicyFromConfig(
 			routeConfig.RequestHeaders,
@@ -40,6 +51,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			Hosts:               slices.Clone(routeConfig.Hosts),
 			Priority:            routeConfig.Priority,
 			UpstreamURL:         upstreamURL,
+			DirectResponse:      directResponse,
 			RequestHeaders:      requestHeaders,
 			ResponseHeaders:     responseHeaders,
 			RateLimit:           rateLimit,

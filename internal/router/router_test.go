@@ -414,7 +414,7 @@ func TestNew(t *testing.T) {
 			wantMessage: `duplicate host: "api.example.com"`,
 		},
 		{
-			name: "nil upstream URL",
+			name: "missing route action",
 			routes: []Route{
 				{
 					Name:       "users",
@@ -422,7 +422,7 @@ func TestNew(t *testing.T) {
 					PathPrefix: "/users",
 				},
 			},
-			wantMessage: "upstream URL must not be nil",
+			wantMessage: "either upstream URL or direct response must be configured",
 		},
 		{
 			name: "unsupported upstream URL scheme",
@@ -781,6 +781,207 @@ func TestNew(t *testing.T) {
 				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
 			}
 		})
+	}
+}
+
+func TestNewValidatesDirectResponseAction(t *testing.T) {
+	tests := []struct {
+		name        string
+		route       Route
+		wantMessage string
+	}{
+		{
+			name: "status 200 is valid",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: http.StatusOK, Body: "ok"},
+			},
+		},
+		{
+			name: "status 599 is valid",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: 599},
+			},
+		},
+		{
+			name: "response headers are allowed",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+				ResponseHeaders: &HeaderTransformPolicy{
+					Set: map[string]string{"X-Maintenance": "true"},
+				},
+			},
+		},
+		{
+			name: "rate limit is allowed",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+				RateLimit: &RateLimitPolicy{
+					RequestsPerSecond: 10,
+					Burst:             20,
+				},
+			},
+		},
+		{
+			name: "upstream and direct response are mutually exclusive",
+			route: Route{
+				Name:           "maintenance",
+				Protocol:       ProtocolHTTP,
+				PathPrefix:     "/api",
+				UpstreamURL:    mustParseURL(t, "http://api-service:8080"),
+				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+			},
+			wantMessage: "upstream URL and direct response are mutually exclusive",
+		},
+		{
+			name: "protocol is rejected for direct response",
+			route: Route{
+				Name:           "maintenance",
+				Protocol:       ProtocolHTTP,
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+			},
+			wantMessage: "protocol is not supported for direct response",
+		},
+		{
+			name: "request headers are rejected",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+				RequestHeaders: &HeaderTransformPolicy{
+					Set: map[string]string{"X-Gateway": "DevGate"},
+				},
+			},
+			wantMessage: "request headers are not supported for direct response",
+		},
+		{
+			name: "strip path prefix is rejected",
+			route: Route{
+				Name:            "maintenance",
+				PathPrefix:      "/api",
+				DirectResponse:  &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+				StripPathPrefix: true,
+			},
+			wantMessage: "strip path prefix is not supported for direct response",
+		},
+		{
+			name: "request timeout is rejected",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+				RequestTimeout: time.Second,
+			},
+			wantMessage: "request timeout is not supported for direct response",
+		},
+		{
+			name: "request body limit is rejected",
+			route: Route{
+				Name:                "maintenance",
+				PathPrefix:          "/api",
+				DirectResponse:      &DirectResponse{StatusCode: http.StatusServiceUnavailable},
+				MaxRequestBodyBytes: 1,
+			},
+			wantMessage: "max request body bytes is not supported for direct response",
+		},
+		{
+			name: "status below final response range is rejected",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: 199},
+			},
+			wantMessage: "direct response status code must be between 200 and 599",
+		},
+		{
+			name: "status above supported range is rejected",
+			route: Route{
+				Name:           "maintenance",
+				PathPrefix:     "/api",
+				DirectResponse: &DirectResponse{StatusCode: 600},
+			},
+			wantMessage: "direct response status code must be between 200 and 599",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New([]Route{test.route})
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestNewValidatesDirectResponseBodyForStatus(t *testing.T) {
+	for _, statusCode := range []int{
+		http.StatusNoContent,
+		http.StatusResetContent,
+		http.StatusNotModified,
+	} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			got, err := New([]Route{
+				{
+					Name:       "direct-response",
+					PathPrefix: "/api",
+					DirectResponse: &DirectResponse{
+						StatusCode: statusCode,
+						Body:       "unexpected body",
+					},
+				},
+			})
+			if err == nil {
+				t.Fatalf("New() error = nil, want body validation error")
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), "must not include a body") {
+				t.Errorf("New() error = %q, want body context", err)
+			}
+		})
+	}
+
+	got, err := New([]Route{
+		{
+			Name:       "direct-response",
+			PathPrefix: "/api",
+			DirectResponse: &DirectResponse{
+				StatusCode: http.StatusUseProxy,
+				Body:       "body",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() status 305 error = %v", err)
+	}
+	if got == nil {
+		t.Fatal("New() status 305 router = nil, want non-nil router")
 	}
 }
 

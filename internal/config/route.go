@@ -13,6 +13,7 @@ type RouteConfig struct {
 	Hosts               []string               `yaml:"hosts"`
 	Priority            int                    `yaml:"priority"`
 	UpstreamURL         string                 `yaml:"upstream_url"`
+	DirectResponse      *DirectResponseConfig  `yaml:"direct_response"`
 	RateLimit           *RateLimitConfig       `yaml:"rate_limit"`
 	StripPathPrefix     bool                   `yaml:"strip_path_prefix"`
 	RequestTimeout      time.Duration          `yaml:"request_timeout"`
@@ -32,6 +33,13 @@ type HeaderTransformConfig struct {
 type RateLimitConfig struct {
 	RequestsPerSecond float64 `yaml:"requests_per_second"`
 	Burst             int     `yaml:"burst"`
+}
+
+// DirectResponseConfig configures a static HTTP response returned without
+// forwarding the request to an upstream.
+type DirectResponseConfig struct {
+	StatusCode int    `yaml:"status"`
+	Body       string `yaml:"body"`
 }
 
 // HeaderMatchConfig describes an exact request header condition for a route.
