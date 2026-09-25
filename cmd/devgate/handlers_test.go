@@ -111,6 +111,171 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesCreatesDirectResponseHandler(t *testing.T) {
+	transport := &countingRoundTripper{}
+	routes := []router.Route{
+		{
+			Name:       "maintenance",
+			PathPrefix: "/api",
+			DirectResponse: &router.DirectResponse{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       `{"status":"maintenance"}`,
+			},
+			ResponseHeaders: &router.HeaderTransformPolicy{
+				Set: map[string]string{
+					"Content-Type":      "application/json",
+					"X-Direct-Response": "true",
+				},
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		transport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	handler := handlers["maintenance"]
+	if handler == nil {
+		t.Fatal("handler for route maintenance = nil, want non-nil handler")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://gateway.local/api", nil))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if got := recorder.Body.String(); got != `{"status":"maintenance"}` {
+		t.Errorf("body = %q, want %q", got, `{"status":"maintenance"}`)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if got := recorder.Header().Get("X-Direct-Response"); got != "true" {
+		t.Errorf("X-Direct-Response = %q, want %q", got, "true")
+	}
+	if transport.calls != 0 {
+		t.Errorf("transport calls = %d, want 0", transport.calls)
+	}
+}
+
+func TestHandlersFromRoutesAppliesRateLimitToDirectResponse(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:       "maintenance",
+			PathPrefix: "/api",
+			DirectResponse: &router.DirectResponse{
+				StatusCode: http.StatusServiceUnavailable,
+			},
+			RateLimit: &router.RateLimitPolicy{
+				RequestsPerSecond: 1,
+				Burst:             1,
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		&countingRoundTripper{},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	handler := handlers["maintenance"]
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "http://gateway.local/api", nil))
+	if first.Code != http.StatusServiceUnavailable {
+		t.Errorf("first status code = %d, want %d", first.Code, http.StatusServiceUnavailable)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "http://gateway.local/api", nil))
+	if second.Code != http.StatusTooManyRequests {
+		t.Errorf("second status code = %d, want %d", second.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
+	tests := []struct {
+		name        string
+		route       router.Route
+		wantMessage string
+	}{
+		{
+			name: "missing action",
+			route: router.Route{
+				Name:       "missing-action",
+				PathPrefix: "/api",
+			},
+			wantMessage: "no upstream URL or direct response specified",
+		},
+		{
+			name: "mutually exclusive actions",
+			route: router.Route{
+				Name:        "ambiguous-action",
+				Protocol:    router.ProtocolHTTP,
+				PathPrefix:  "/api",
+				UpstreamURL: mustParseRouteURL(t, "http://api-service:8080"),
+				DirectResponse: &router.DirectResponse{
+					StatusCode: http.StatusServiceUnavailable,
+				},
+			},
+			wantMessage: "upstream URL and direct response are mutually exclusive",
+		},
+		{
+			name: "invalid direct response status",
+			route: router.Route{
+				Name:       "invalid-status",
+				PathPrefix: "/api",
+				DirectResponse: &router.DirectResponse{
+					StatusCode: 199,
+				},
+			},
+			wantMessage: "create direct response handler",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := handlersFromRoutes(
+				[]router.Route{test.route},
+				&countingRoundTripper{},
+				testCircuitFailureThreshold,
+				testCircuitOpenTimeout,
+				newTestCircuitBreakerMetrics(),
+				newTestRateLimiterMetrics(),
+				nil,
+				discardLogger(),
+			)
+			if err == nil {
+				t.Fatalf("handlersFromRoutes() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("handlersFromRoutes() handlers = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("handlersFromRoutes() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
 func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 	routes := []router.Route{
 		{

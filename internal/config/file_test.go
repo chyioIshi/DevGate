@@ -65,6 +65,23 @@ func TestLoadExampleConfig(t *testing.T) {
 	if got.Routes[1].PathExact != "/api/status" {
 		t.Errorf("example config exact path = %q, want %q", got.Routes[1].PathExact, "/api/status")
 	}
+	if len(got.Routes) < 3 {
+		t.Fatalf("example config routes length = %d, want at least 3", len(got.Routes))
+	}
+	directResponse := got.Routes[2].DirectResponse
+	if directResponse == nil {
+		t.Fatal("example config direct response = nil, want configured response")
+	}
+	if directResponse.StatusCode != 410 {
+		t.Errorf("example config direct response status = %d, want %d", directResponse.StatusCode, 410)
+	}
+	if directResponse.Body != "API v1 is no longer available" {
+		t.Errorf(
+			"example config direct response body = %q, want %q",
+			directResponse.Body,
+			"API v1 is no longer available",
+		)
+	}
 
 	requestHeaders := got.Routes[0].RequestHeaders
 	if requestHeaders == nil {
