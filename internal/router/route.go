@@ -29,6 +29,7 @@ type Route struct {
 	Hosts               []string
 	Priority            int
 	UpstreamURL         *url.URL
+	DirectResponse      *DirectResponse
 	RequestHeaders      *HeaderTransformPolicy
 	ResponseHeaders     *HeaderTransformPolicy
 	RateLimit           *RateLimitPolicy
@@ -42,6 +43,13 @@ type Route struct {
 type HeaderTransformPolicy struct {
 	Set    map[string]string
 	Remove []string
+}
+
+// DirectResponse describes a static HTTP response returned for a matched route
+// without forwarding the request to an upstream.
+type DirectResponse struct {
+	StatusCode int
+	Body       string
 }
 
 // RateLimitPolicy defines the local token-bucket settings for a route.
@@ -60,8 +68,9 @@ func (r Route) validate() error {
 	if strings.TrimSpace(r.Name) == "" {
 		return errors.New("route name must not be empty")
 	}
-	if r.Protocol != ProtocolHTTP && r.Protocol != ProtocolGRPC {
-		return fmt.Errorf("unsupported protocol %q", r.Protocol)
+
+	if err := r.validateAction(); err != nil {
+		return err
 	}
 
 	hasPathPrefix := r.PathPrefix != ""
@@ -116,19 +125,6 @@ func (r Route) validate() error {
 		seenHosts[host] = struct{}{}
 	}
 
-	if r.UpstreamURL == nil {
-		return errors.New("upstream URL must not be nil")
-	}
-
-	if r.UpstreamURL.Scheme != "http" && r.UpstreamURL.Scheme != "https" {
-		return fmt.Errorf(
-			"upstream URL scheme %q must be either 'http' or 'https'",
-			r.UpstreamURL.Scheme,
-		)
-	}
-	if strings.TrimSpace(r.UpstreamURL.Host) == "" {
-		return errors.New("upstream URL host must not be empty")
-	}
 	if r.RequestTimeout < 0 {
 		return errors.New("request timeout must not be negative")
 	}
@@ -164,6 +160,50 @@ func (r Route) validate() error {
 			)
 		}
 		seenHeaderMatches[normalized] = struct{}{}
+	}
+	return nil
+}
+
+func (r Route) validateAction() error {
+	if r.DirectResponse == nil && r.UpstreamURL == nil {
+		return errors.New("either upstream URL or direct response must be configured")
+	}
+	if r.DirectResponse != nil && r.UpstreamURL != nil {
+		return errors.New("upstream URL and direct response are mutually exclusive")
+	}
+	if r.UpstreamURL != nil {
+		if r.Protocol != ProtocolHTTP && r.Protocol != ProtocolGRPC {
+			return fmt.Errorf("unsupported protocol %q", r.Protocol)
+		}
+		if r.UpstreamURL.Scheme != "http" && r.UpstreamURL.Scheme != "https" {
+			return fmt.Errorf(
+				"upstream URL scheme %q must be either 'http' or 'https'",
+				r.UpstreamURL.Scheme,
+			)
+		}
+		if strings.TrimSpace(r.UpstreamURL.Host) == "" {
+			return errors.New("upstream URL host must not be empty")
+		}
+	}
+	if r.DirectResponse != nil {
+		if r.Protocol != "" {
+			return errors.New("protocol is not supported for direct response")
+		}
+		if r.RequestHeaders != nil {
+			return errors.New("request headers are not supported for direct response")
+		}
+		if r.StripPathPrefix {
+			return errors.New("strip path prefix is not supported for direct response")
+		}
+		if r.RequestTimeout != 0 {
+			return errors.New("request timeout is not supported for direct response")
+		}
+		if r.MaxRequestBodyBytes != 0 {
+			return errors.New("max request body bytes is not supported for direct response")
+		}
+		if err := r.DirectResponse.validate(); err != nil {
+			return fmt.Errorf("direct response validation: %w", err)
+		}
 	}
 	return nil
 }
@@ -311,6 +351,21 @@ func validateHostname(host string) error {
 			if !((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-') {
 				return errors.New("host label contains invalid character")
 			}
+		}
+	}
+	return nil
+}
+
+func (d DirectResponse) validate() error {
+	if d.StatusCode < 200 || d.StatusCode > 599 {
+		return errors.New("direct response status code must be between 200 and 599")
+	}
+	if d.Body != "" {
+		switch d.StatusCode {
+		case http.StatusNoContent,
+			http.StatusResetContent,
+			http.StatusNotModified:
+			return fmt.Errorf("response status %d must not include a body", d.StatusCode)
 		}
 	}
 	return nil

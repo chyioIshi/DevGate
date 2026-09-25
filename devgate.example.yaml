@@ -29,6 +29,15 @@ routes:
     path_exact: /api/status
     upstream_url: http://status-service:8080
 
+  - name: deprecated-api
+    path_prefix: /api/v1
+    direct_response:
+      status: 410
+      body: API v1 is no longer available
+    response_headers:
+      set:
+        Content-Type: text/plain; charset=utf-8
+
   - name: fallback
     protocol: http
     path_prefix: /
