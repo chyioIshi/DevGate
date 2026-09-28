@@ -38,6 +38,12 @@ routes:
       set:
         Content-Type: text/plain; charset=utf-8
 
+  - name: legacy-api
+    path_exact: /legacy
+    redirect:
+      status: 308
+      location: /api/v2
+
   - name: fallback
     protocol: http
     path_prefix: /
