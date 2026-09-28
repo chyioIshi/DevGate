@@ -174,6 +174,70 @@ func TestConfiguredDirectResponseRouteReturnsWithoutUpstream(t *testing.T) {
 	}
 }
 
+func TestConfiguredRedirectRouteReturnsWithoutUpstream(t *testing.T) {
+	routes, err := routesFromConfig([]config.RouteConfig{
+		{
+			Name:      "legacy-api",
+			PathExact: "/legacy",
+			Redirect: &config.RedirectConfig{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "/api/v2",
+			},
+			ResponseHeaders: &config.HeaderTransformConfig{
+				Set: map[string]string{"Cache-Control": "no-store"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+	routeRouter, err := router.New(routes)
+	if err != nil {
+		t.Fatalf("router.New() error = %v", err)
+	}
+
+	transport := &countingRoundTripper{}
+	registry := prometheus.NewRegistry()
+	routeHandlers, err := handlersFromRoutes(
+		routes,
+		transport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	gatewayHandler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		discardLogger(),
+		metrics.NewHTTP(registry),
+	)
+
+	recorder := httptest.NewRecorder()
+	gatewayHandler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "/legacy", nil),
+	)
+
+	if recorder.Code != http.StatusPermanentRedirect {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusPermanentRedirect)
+	}
+	if got := recorder.Header().Get("Location"); got != "/api/v2" {
+		t.Errorf("Location = %q, want %q", got, "/api/v2")
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+	if transport.calls != 0 {
+		t.Errorf("transport calls = %d, want 0", transport.calls)
+	}
+}
+
 func TestConfiguredExactRouteTakesPrecedenceOverPrefix(t *testing.T) {
 	prefixUpstream := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, _ *http.Request) {
