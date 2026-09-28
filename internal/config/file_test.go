@@ -82,6 +82,19 @@ func TestLoadExampleConfig(t *testing.T) {
 			"API v1 is no longer available",
 		)
 	}
+	if len(got.Routes) < 4 {
+		t.Fatalf("example config routes length = %d, want at least 4", len(got.Routes))
+	}
+	redirect := got.Routes[3].Redirect
+	if redirect == nil {
+		t.Fatal("example config redirect = nil, want configured redirect")
+	}
+	if redirect.StatusCode != 308 {
+		t.Errorf("example config redirect status = %d, want %d", redirect.StatusCode, 308)
+	}
+	if redirect.Location != "/api/v2" {
+		t.Errorf("example config redirect location = %q, want %q", redirect.Location, "/api/v2")
+	}
 
 	requestHeaders := got.Routes[0].RequestHeaders
 	if requestHeaders == nil {

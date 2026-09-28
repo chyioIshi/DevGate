@@ -57,6 +57,11 @@ routes:
     direct_response:
       status: 503
       body: service temporarily unavailable
+  - name: legacy-api
+    path_exact: /legacy
+    redirect:
+      status: 308
+      location: /api/v2
 `
 	want := []RouteConfig{
 		{
@@ -109,6 +114,14 @@ routes:
 			DirectResponse: &DirectResponseConfig{
 				StatusCode: 503,
 				Body:       "service temporarily unavailable",
+			},
+		},
+		{
+			Name:      "legacy-api",
+			PathExact: "/legacy",
+			Redirect: &RedirectConfig{
+				StatusCode: 308,
+				Location:   "/api/v2",
 			},
 		},
 	}
@@ -250,6 +263,31 @@ routes:
 		t.Errorf("decodeConfig() error = %q, want decoding context", err)
 	}
 	if !strings.Contains(err.Error(), `unknown field "payload"`) {
+		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownRedirectField(t *testing.T) {
+	input := `
+routes:
+  - name: legacy-api
+    path_exact: /legacy
+    redirect:
+      status: 308
+      target: /api/v2
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want unknown field error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "decode YAML config") {
+		t.Errorf("decodeConfig() error = %q, want decoding context", err)
+	}
+	if !strings.Contains(err.Error(), `unknown field "target"`) {
 		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
 	}
 }

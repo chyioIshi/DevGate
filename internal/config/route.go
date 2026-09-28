@@ -14,6 +14,7 @@ type RouteConfig struct {
 	Priority            int                    `yaml:"priority"`
 	UpstreamURL         string                 `yaml:"upstream_url"`
 	DirectResponse      *DirectResponseConfig  `yaml:"direct_response"`
+	Redirect            *RedirectConfig        `yaml:"redirect"`
 	RateLimit           *RateLimitConfig       `yaml:"rate_limit"`
 	StripPathPrefix     bool                   `yaml:"strip_path_prefix"`
 	RequestTimeout      time.Duration          `yaml:"request_timeout"`
@@ -40,6 +41,13 @@ type RateLimitConfig struct {
 type DirectResponseConfig struct {
 	StatusCode int    `yaml:"status"`
 	Body       string `yaml:"body"`
+}
+
+// RedirectConfig configures an HTTP redirect returned without forwarding the
+// request to an upstream.
+type RedirectConfig struct {
+	StatusCode int    `yaml:"status"`
+	Location   string `yaml:"location"`
 }
 
 // HeaderMatchConfig describes an exact request header condition for a route.

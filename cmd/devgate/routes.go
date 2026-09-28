@@ -28,6 +28,13 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 				Body:       routeConfig.DirectResponse.Body,
 			}
 		}
+		var redirect *router.Redirect
+		if routeConfig.Redirect != nil {
+			redirect = &router.Redirect{
+				StatusCode: routeConfig.Redirect.StatusCode,
+				Location:   routeConfig.Redirect.Location,
+			}
+		}
 		requestHeaders := headerTransformPolicyFromConfig(
 			routeConfig.RequestHeaders,
 		)
@@ -52,6 +59,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			Priority:            routeConfig.Priority,
 			UpstreamURL:         upstreamURL,
 			DirectResponse:      directResponse,
+			Redirect:            redirect,
 			RequestHeaders:      requestHeaders,
 			ResponseHeaders:     responseHeaders,
 			RateLimit:           rateLimit,

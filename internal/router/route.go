@@ -30,6 +30,7 @@ type Route struct {
 	Priority            int
 	UpstreamURL         *url.URL
 	DirectResponse      *DirectResponse
+	Redirect            *Redirect
 	RequestHeaders      *HeaderTransformPolicy
 	ResponseHeaders     *HeaderTransformPolicy
 	RateLimit           *RateLimitPolicy
@@ -50,6 +51,13 @@ type HeaderTransformPolicy struct {
 type DirectResponse struct {
 	StatusCode int
 	Body       string
+}
+
+// Redirect describes an HTTP redirect returned for a matched route without
+// forwarding the request to an upstream.
+type Redirect struct {
+	StatusCode int
+	Location   string
 }
 
 // RateLimitPolicy defines the local token-bucket settings for a route.
@@ -165,45 +173,81 @@ func (r Route) validate() error {
 }
 
 func (r Route) validateAction() error {
-	if r.DirectResponse == nil && r.UpstreamURL == nil {
-		return errors.New("either upstream URL or direct response must be configured")
-	}
-	if r.DirectResponse != nil && r.UpstreamURL != nil {
-		return errors.New("upstream URL and direct response are mutually exclusive")
-	}
+	actionCount := 0
 	if r.UpstreamURL != nil {
-		if r.Protocol != ProtocolHTTP && r.Protocol != ProtocolGRPC {
-			return fmt.Errorf("unsupported protocol %q", r.Protocol)
-		}
-		if r.UpstreamURL.Scheme != "http" && r.UpstreamURL.Scheme != "https" {
-			return fmt.Errorf(
-				"upstream URL scheme %q must be either 'http' or 'https'",
-				r.UpstreamURL.Scheme,
-			)
-		}
-		if strings.TrimSpace(r.UpstreamURL.Host) == "" {
-			return errors.New("upstream URL host must not be empty")
-		}
+		actionCount++
 	}
 	if r.DirectResponse != nil {
-		if r.Protocol != "" {
-			return errors.New("protocol is not supported for direct response")
+		actionCount++
+	}
+	if r.Redirect != nil {
+		actionCount++
+	}
+
+	switch {
+	case actionCount == 0:
+		return errors.New("no action configured for the route")
+	case actionCount > 1:
+		return errors.New("multiple actions configured for the route")
+	case actionCount == 1:
+		if r.UpstreamURL != nil {
+			if r.Protocol != ProtocolHTTP && r.Protocol != ProtocolGRPC {
+				return fmt.Errorf("unsupported protocol %q", r.Protocol)
+			}
+			if r.UpstreamURL.Scheme != "http" && r.UpstreamURL.Scheme != "https" {
+				return fmt.Errorf(
+					"upstream URL scheme %q must be either 'http' or 'https'",
+					r.UpstreamURL.Scheme,
+				)
+			}
+			if strings.TrimSpace(r.UpstreamURL.Host) == "" {
+				return errors.New("upstream URL host must not be empty")
+			}
 		}
-		if r.RequestHeaders != nil {
-			return errors.New("request headers are not supported for direct response")
+		if r.DirectResponse != nil {
+			if r.Protocol != "" {
+				return errors.New("protocol is not supported for direct response")
+			}
+			if r.RequestHeaders != nil {
+				return errors.New("request headers are not supported for direct response")
+			}
+			if r.StripPathPrefix {
+				return errors.New("strip path prefix is not supported for direct response")
+			}
+			if r.RequestTimeout != 0 {
+				return errors.New("request timeout is not supported for direct response")
+			}
+			if r.MaxRequestBodyBytes != 0 {
+				return errors.New("max request body bytes is not supported for direct response")
+			}
+			if err := r.DirectResponse.validate(); err != nil {
+				return fmt.Errorf("direct response validation: %w", err)
+			}
 		}
-		if r.StripPathPrefix {
-			return errors.New("strip path prefix is not supported for direct response")
+		if r.Redirect != nil {
+			if r.Protocol != "" {
+				return errors.New("protocol is not supported for redirect")
+			}
+			if r.RequestHeaders != nil {
+				return errors.New("request headers are not supported for redirect")
+			}
+			if r.StripPathPrefix {
+				return errors.New("strip path prefix is not supported for redirect")
+			}
+			if r.RequestTimeout != 0 {
+				return errors.New("request timeout is not supported for redirect")
+			}
+			if r.MaxRequestBodyBytes != 0 {
+				return errors.New("max request body bytes is not supported for redirect")
+			}
+			if r.ResponseHeaders != nil && r.ResponseHeaders.modifies("location") {
+				return errors.New("response headers cannot modify Location for redirect")
+			}
+			if err := r.Redirect.validate(); err != nil {
+				return fmt.Errorf("redirect validation: %w", err)
+			}
 		}
-		if r.RequestTimeout != 0 {
-			return errors.New("request timeout is not supported for direct response")
-		}
-		if r.MaxRequestBodyBytes != 0 {
-			return errors.New("max request body bytes is not supported for direct response")
-		}
-		if err := r.DirectResponse.validate(); err != nil {
-			return fmt.Errorf("direct response validation: %w", err)
-		}
+		return nil
 	}
 	return nil
 }
@@ -253,6 +297,20 @@ func (p HeaderTransformPolicy) validate(isReserved func(string) bool) error {
 		removeNames[normalized] = struct{}{}
 	}
 	return nil
+}
+
+func (p HeaderTransformPolicy) modifies(name string) bool {
+	for h := range p.Set {
+		if strings.EqualFold(h, name) {
+			return true
+		}
+	}
+	for _, h := range p.Remove {
+		if strings.EqualFold(h, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func isReservedRequestHeader(name string) bool {
@@ -366,6 +424,37 @@ func (d DirectResponse) validate() error {
 			http.StatusResetContent,
 			http.StatusNotModified:
 			return fmt.Errorf("response status %d must not include a body", d.StatusCode)
+		}
+	}
+	return nil
+}
+
+func (r Redirect) validate() error {
+	switch r.StatusCode {
+	case http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect:
+	default:
+		return errors.New("redirect status code must be one of 301, 302, 303, 307, or 308")
+	}
+	if strings.TrimSpace(r.Location) == "" {
+		return errors.New("redirect location cannot be empty")
+	}
+	if !httpguts.ValidHeaderFieldValue(r.Location) {
+		return errors.New("redirect location contains invalid header value")
+	}
+	parsedLocation, err := url.Parse(r.Location)
+	if err != nil {
+		return fmt.Errorf("parsing redirect location: %w", err)
+	}
+	if parsedLocation.IsAbs() {
+		if parsedLocation.Scheme != "http" && parsedLocation.Scheme != "https" {
+			return errors.New("redirect location must have http or https scheme")
+		}
+		if parsedLocation.Host == "" {
+			return errors.New("redirect location host must not be empty")
 		}
 	}
 	return nil

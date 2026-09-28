@@ -95,15 +95,37 @@ routes:
         Retry-After: "120"
 ```
 
-Each route configures exactly one action: either `upstream_url` or
-`direct_response`. The `protocol` field applies only to upstream routes and
-must be omitted for a direct response.
+Each route configures exactly one action: `upstream_url`, `direct_response`, or
+`redirect`. The `protocol` field applies only to upstream routes and must be
+omitted for a direct response.
 
 Direct-response status codes must be between `200` and `599`. Responses with
 status `204`, `205`, or `304` cannot configure a body. Response-header
 transformations and rate limiting remain available, while proxy-only settings
 such as request-header transformations, path-prefix stripping, request
 timeouts, and request-body limits are rejected.
+
+## Redirects
+
+A route can redirect a client without forwarding the request to an upstream:
+
+```yaml
+routes:
+  - name: legacy-api
+    path_exact: /legacy
+    redirect:
+      status: 308
+      location: /api/v2
+    response_headers:
+      set:
+        Cache-Control: no-store
+```
+
+Redirect status must be `301`, `302`, `303`, `307`, or `308`. The location can
+be a relative reference or an absolute HTTP or HTTPS URL. Response-header
+transformations and rate limiting are supported, but the `Location` response
+header is owned by the redirect action and cannot be set or removed by a
+header transformation. Proxy-only settings are rejected.
 
 ## Trusted proxies
 

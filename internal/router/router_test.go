@@ -422,7 +422,7 @@ func TestNew(t *testing.T) {
 					PathPrefix: "/users",
 				},
 			},
-			wantMessage: "either upstream URL or direct response must be configured",
+			wantMessage: "no action configured for the route",
 		},
 		{
 			name: "unsupported upstream URL scheme",
@@ -838,7 +838,7 @@ func TestNewValidatesDirectResponseAction(t *testing.T) {
 				UpstreamURL:    mustParseURL(t, "http://api-service:8080"),
 				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
 			},
-			wantMessage: "upstream URL and direct response are mutually exclusive",
+			wantMessage: "multiple actions configured for the route",
 		},
 		{
 			name: "protocol is rejected for direct response",
@@ -933,6 +933,314 @@ func TestNewValidatesDirectResponseAction(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.wantMessage) {
 				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestNewValidatesRedirectAction(t *testing.T) {
+	tests := []struct {
+		name        string
+		redirect    Redirect
+		wantMessage string
+	}{
+		{
+			name:     "relative location is valid",
+			redirect: Redirect{StatusCode: http.StatusPermanentRedirect, Location: "/api/v2"},
+		},
+		{
+			name: "absolute HTTP location is valid",
+			redirect: Redirect{
+				StatusCode: http.StatusMovedPermanently,
+				Location:   "http://api.example.com/v2",
+			},
+		},
+		{
+			name: "absolute HTTPS location is valid",
+			redirect: Redirect{
+				StatusCode: http.StatusFound,
+				Location:   "https://api.example.com/v2",
+			},
+		},
+		{
+			name:     "see other status is valid",
+			redirect: Redirect{StatusCode: http.StatusSeeOther, Location: "/api/v2"},
+		},
+		{
+			name:     "temporary redirect status is valid",
+			redirect: Redirect{StatusCode: http.StatusTemporaryRedirect, Location: "/api/v2"},
+		},
+		{
+			name:        "non-redirect status is rejected",
+			redirect:    Redirect{StatusCode: http.StatusOK, Location: "/api/v2"},
+			wantMessage: "redirect status code must be one of 301, 302, 303, 307, or 308",
+		},
+		{
+			name:        "empty location is rejected",
+			redirect:    Redirect{StatusCode: http.StatusPermanentRedirect},
+			wantMessage: "redirect location cannot be empty",
+		},
+		{
+			name:        "whitespace location is rejected",
+			redirect:    Redirect{StatusCode: http.StatusPermanentRedirect, Location: "  \t"},
+			wantMessage: "redirect location cannot be empty",
+		},
+		{
+			name: "header injection is rejected",
+			redirect: Redirect{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "/api/v2\r\nX-Evil: true",
+			},
+			wantMessage: "redirect location contains invalid header value",
+		},
+		{
+			name: "malformed URL is rejected",
+			redirect: Redirect{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "/api/%zz",
+			},
+			wantMessage: "parsing redirect location",
+		},
+		{
+			name: "unsupported absolute scheme is rejected",
+			redirect: Redirect{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "javascript:alert(1)",
+			},
+			wantMessage: "redirect location must have http or https scheme",
+		},
+		{
+			name: "absolute location without host is rejected",
+			redirect: Redirect{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "https:/api/v2",
+			},
+			wantMessage: "redirect location host must not be empty",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New([]Route{
+				{
+					Name:      "legacy-api",
+					PathExact: "/legacy",
+					Redirect:  &test.redirect,
+				},
+			})
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestNewValidatesRedirectPolicies(t *testing.T) {
+	tests := []struct {
+		name        string
+		configure   func(*Route)
+		wantMessage string
+	}{
+		{
+			name: "response headers are allowed",
+			configure: func(route *Route) {
+				route.ResponseHeaders = &HeaderTransformPolicy{
+					Set: map[string]string{"Cache-Control": "no-store"},
+				}
+			},
+		},
+		{
+			name: "setting Location response header is rejected",
+			configure: func(route *Route) {
+				route.ResponseHeaders = &HeaderTransformPolicy{
+					Set: map[string]string{"lOcAtIoN": "/other"},
+				}
+			},
+			wantMessage: "response headers cannot modify Location for redirect",
+		},
+		{
+			name: "removing Location response header is rejected",
+			configure: func(route *Route) {
+				route.ResponseHeaders = &HeaderTransformPolicy{
+					Remove: []string{"LOCATION"},
+				}
+			},
+			wantMessage: "response headers cannot modify Location for redirect",
+		},
+		{
+			name: "rate limit is allowed",
+			configure: func(route *Route) {
+				route.RateLimit = &RateLimitPolicy{
+					RequestsPerSecond: 10,
+					Burst:             20,
+				}
+			},
+		},
+		{
+			name: "protocol is rejected",
+			configure: func(route *Route) {
+				route.Protocol = ProtocolHTTP
+			},
+			wantMessage: "protocol is not supported for redirect",
+		},
+		{
+			name: "request headers are rejected",
+			configure: func(route *Route) {
+				route.RequestHeaders = &HeaderTransformPolicy{
+					Set: map[string]string{"X-Gateway": "DevGate"},
+				}
+			},
+			wantMessage: "request headers are not supported for redirect",
+		},
+		{
+			name: "strip path prefix is rejected",
+			configure: func(route *Route) {
+				route.StripPathPrefix = true
+			},
+			wantMessage: "strip path prefix is not supported for redirect",
+		},
+		{
+			name: "request timeout is rejected",
+			configure: func(route *Route) {
+				route.RequestTimeout = time.Second
+			},
+			wantMessage: "request timeout is not supported for redirect",
+		},
+		{
+			name: "request body limit is rejected",
+			configure: func(route *Route) {
+				route.MaxRequestBodyBytes = 1
+			},
+			wantMessage: "max request body bytes is not supported for redirect",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			route := Route{
+				Name:      "legacy-api",
+				PathExact: "/legacy",
+				Redirect: &Redirect{
+					StatusCode: http.StatusPermanentRedirect,
+					Location:   "/api/v2",
+				},
+			}
+			test.configure(&route)
+
+			got, err := New([]Route{route})
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestNewAllowsProxyResponseLocationTransform(t *testing.T) {
+	got, err := New([]Route{
+		{
+			Name:        "users",
+			Protocol:    ProtocolHTTP,
+			PathPrefix:  "/api/users",
+			UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+			ResponseHeaders: &HeaderTransformPolicy{
+				Set: map[string]string{"Location": "https://api.example.com/users"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if got == nil {
+		t.Fatal("New() router = nil, want non-nil router")
+	}
+}
+
+func TestNewRejectsMultipleRouteActions(t *testing.T) {
+	upstreamURL := mustParseURL(t, "http://api-service:8080")
+	directResponse := &DirectResponse{StatusCode: http.StatusOK}
+	redirect := &Redirect{StatusCode: http.StatusPermanentRedirect, Location: "/api/v2"}
+
+	tests := []struct {
+		name           string
+		upstreamURL    *url.URL
+		directResponse *DirectResponse
+		redirect       *Redirect
+	}{
+		{
+			name:           "upstream and direct response",
+			upstreamURL:    upstreamURL,
+			directResponse: directResponse,
+		},
+		{
+			name:        "upstream and redirect",
+			upstreamURL: upstreamURL,
+			redirect:    redirect,
+		},
+		{
+			name:           "direct response and redirect",
+			directResponse: directResponse,
+			redirect:       redirect,
+		},
+		{
+			name:           "all actions",
+			upstreamURL:    upstreamURL,
+			directResponse: directResponse,
+			redirect:       redirect,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New([]Route{
+				{
+					Name:           "conflicting-actions",
+					Protocol:       ProtocolHTTP,
+					PathPrefix:     "/api",
+					UpstreamURL:    test.upstreamURL,
+					DirectResponse: test.directResponse,
+					Redirect:       test.redirect,
+				},
+			})
+			if err == nil {
+				t.Fatal("New() error = nil, want multiple actions error")
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), "multiple actions configured for the route") {
+				t.Errorf("New() error = %q, want multiple actions context", err)
 			}
 		})
 	}
@@ -1839,6 +2147,49 @@ func TestIsReservedResponseHeader(t *testing.T) {
 		t.Run("allowed "+name, func(t *testing.T) {
 			if isReservedResponseHeader(name) {
 				t.Errorf("isReservedResponseHeader(%q) = true, want false", name)
+			}
+		})
+	}
+}
+
+func TestHeaderTransformPolicyModifies(t *testing.T) {
+	tests := []struct {
+		name       string
+		policy     HeaderTransformPolicy
+		headerName string
+		want       bool
+	}{
+		{
+			name:       "set header",
+			policy:     HeaderTransformPolicy{Set: map[string]string{"lOcAtIoN": "/api/v2"}},
+			headerName: "Location",
+			want:       true,
+		},
+		{
+			name:       "removed header",
+			policy:     HeaderTransformPolicy{Remove: []string{"LOCATION"}},
+			headerName: "location",
+			want:       true,
+		},
+		{
+			name: "unrelated headers",
+			policy: HeaderTransformPolicy{
+				Set:    map[string]string{"Cache-Control": "no-store"},
+				Remove: []string{"Server"},
+			},
+			headerName: "Location",
+		},
+		{
+			name:       "empty policy",
+			headerName: "Location",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := test.policy.modifies(test.headerName)
+			if got != test.want {
+				t.Errorf("modifies(%q) = %t, want %t", test.headerName, got, test.want)
 			}
 		})
 	}

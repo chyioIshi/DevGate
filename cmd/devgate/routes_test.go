@@ -65,6 +65,14 @@ func TestRoutesFromConfig(t *testing.T) {
 				Body:       "service temporarily unavailable",
 			},
 		},
+		{
+			Name:      "legacy-api",
+			PathExact: "/legacy",
+			Redirect: &config.RedirectConfig{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "/api/v2",
+			},
+		},
 	}
 	want := []struct {
 		name                string
@@ -77,6 +85,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		priority            int
 		upstreamURL         string
 		directResponse      *router.DirectResponse
+		redirect            *router.Redirect
 		requestHeaders      *router.HeaderTransformPolicy
 		responseHeaders     *router.HeaderTransformPolicy
 		rateLimit           *router.RateLimitPolicy
@@ -131,6 +140,14 @@ func TestRoutesFromConfig(t *testing.T) {
 			directResponse: &router.DirectResponse{
 				StatusCode: http.StatusServiceUnavailable,
 				Body:       "service temporarily unavailable",
+			},
+		},
+		{
+			name:      "legacy-api",
+			pathExact: "/legacy",
+			redirect: &router.Redirect{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "/api/v2",
 			},
 		},
 	}
@@ -195,6 +212,14 @@ func TestRoutesFromConfig(t *testing.T) {
 				i,
 				got[i].DirectResponse,
 				want[i].directResponse,
+			)
+		}
+		if !reflect.DeepEqual(got[i].Redirect, want[i].redirect) {
+			t.Errorf(
+				"route[%d].Redirect = %+v, want %+v",
+				i,
+				got[i].Redirect,
+				want[i].redirect,
 			)
 		}
 		if !reflect.DeepEqual(got[i].RateLimit, want[i].rateLimit) {

@@ -168,6 +168,57 @@ func TestHandlersFromRoutesCreatesDirectResponseHandler(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesCreatesRedirectHandler(t *testing.T) {
+	transport := &countingRoundTripper{}
+	routes := []router.Route{
+		{
+			Name:      "legacy-api",
+			PathExact: "/legacy",
+			Redirect: &router.Redirect{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "/api/v2",
+			},
+			ResponseHeaders: &router.HeaderTransformPolicy{
+				Set: map[string]string{"Cache-Control": "no-store"},
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		transport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	handler := handlers["legacy-api"]
+	if handler == nil {
+		t.Fatal("handler for route legacy-api = nil, want non-nil handler")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://gateway.local/legacy", nil))
+
+	if recorder.Code != http.StatusPermanentRedirect {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusPermanentRedirect)
+	}
+	if got := recorder.Header().Get("Location"); got != "/api/v2" {
+		t.Errorf("Location = %q, want %q", got, "/api/v2")
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+	if transport.calls != 0 {
+		t.Errorf("transport calls = %d, want 0", transport.calls)
+	}
+}
+
 func TestHandlersFromRoutesAppliesRateLimitToDirectResponse(t *testing.T) {
 	routes := []router.Route{
 		{
@@ -211,6 +262,50 @@ func TestHandlersFromRoutesAppliesRateLimitToDirectResponse(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesAppliesRateLimitToRedirect(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:      "legacy-api",
+			PathExact: "/legacy",
+			Redirect: &router.Redirect{
+				StatusCode: http.StatusPermanentRedirect,
+				Location:   "/api/v2",
+			},
+			RateLimit: &router.RateLimitPolicy{
+				RequestsPerSecond: 1,
+				Burst:             1,
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		routes,
+		&countingRoundTripper{},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	handler := handlers["legacy-api"]
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "http://gateway.local/legacy", nil))
+	if first.Code != http.StatusPermanentRedirect {
+		t.Errorf("first status code = %d, want %d", first.Code, http.StatusPermanentRedirect)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "http://gateway.local/legacy", nil))
+	if second.Code != http.StatusTooManyRequests {
+		t.Errorf("second status code = %d, want %d", second.Code, http.StatusTooManyRequests)
+	}
+}
+
 func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -223,7 +318,7 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 				Name:       "missing-action",
 				PathPrefix: "/api",
 			},
-			wantMessage: "no upstream URL or direct response specified",
+			wantMessage: "no action configured for route",
 		},
 		{
 			name: "mutually exclusive actions",
@@ -236,7 +331,36 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 					StatusCode: http.StatusServiceUnavailable,
 				},
 			},
-			wantMessage: "upstream URL and direct response are mutually exclusive",
+			wantMessage: "multiple actions configured for route",
+		},
+		{
+			name: "upstream and redirect",
+			route: router.Route{
+				Name:        "ambiguous-action",
+				Protocol:    router.ProtocolHTTP,
+				PathPrefix:  "/api",
+				UpstreamURL: mustParseRouteURL(t, "http://api-service:8080"),
+				Redirect: &router.Redirect{
+					StatusCode: http.StatusPermanentRedirect,
+					Location:   "/api/v2",
+				},
+			},
+			wantMessage: "multiple actions configured for route",
+		},
+		{
+			name: "direct response and redirect",
+			route: router.Route{
+				Name:       "ambiguous-action",
+				PathPrefix: "/api",
+				DirectResponse: &router.DirectResponse{
+					StatusCode: http.StatusServiceUnavailable,
+				},
+				Redirect: &router.Redirect{
+					StatusCode: http.StatusPermanentRedirect,
+					Location:   "/api/v2",
+				},
+			},
+			wantMessage: "multiple actions configured for route",
 		},
 		{
 			name: "invalid direct response status",
@@ -248,6 +372,18 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 				},
 			},
 			wantMessage: "create direct response handler",
+		},
+		{
+			name: "invalid redirect status",
+			route: router.Route{
+				Name:      "invalid-redirect",
+				PathExact: "/legacy",
+				Redirect: &router.Redirect{
+					StatusCode: http.StatusOK,
+					Location:   "/api/v2",
+				},
+			},
+			wantMessage: "create redirect handler",
 		},
 	}
 

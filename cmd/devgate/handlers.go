@@ -11,6 +11,7 @@ import (
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/ratelimit"
+	"github.com/chyioishi/devgate/internal/redirect"
 	"github.com/chyioishi/devgate/internal/requestbodylimit"
 	"github.com/chyioishi/devgate/internal/requesttimeout"
 	"github.com/chyioishi/devgate/internal/router"
@@ -35,11 +36,28 @@ func handlersFromRoutes(
 		}
 
 		var routeHandler http.Handler
+		var actionCount int
 		var err error
 
-		if route.UpstreamURL != nil && route.DirectResponse != nil {
+		if route.UpstreamURL != nil {
+			actionCount++
+		}
+		if route.DirectResponse != nil {
+			actionCount++
+		}
+		if route.Redirect != nil {
+			actionCount++
+		}
+
+		switch {
+		case actionCount == 0:
 			return nil, fmt.Errorf(
-				"create handler for route %q: upstream URL and direct response are mutually exclusive",
+				"create handler for route %q: no action configured for route",
+				route.Name,
+			)
+		case actionCount > 1:
+			return nil, fmt.Errorf(
+				"create handler for route %q: multiple actions configured for route",
 				route.Name,
 			)
 		}
@@ -126,9 +144,22 @@ func handlersFromRoutes(
 					err,
 				)
 			}
+		case route.Redirect != nil:
+			routeHandler, err = redirect.New(
+				route.Redirect.StatusCode,
+				route.Redirect.Location,
+				responseHeaderTransform,
+			)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"create redirect handler for route %q: %w",
+					route.Name,
+					err,
+				)
+			}
 		default:
 			return nil, fmt.Errorf(
-				"create handler for route %q: no upstream URL or direct response specified",
+				"create handler for route %q: no action configured for route",
 				route.Name,
 			)
 		}
