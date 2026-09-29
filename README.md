@@ -207,3 +207,22 @@ chain and forwards only the peer IP. For requests from a trusted peer, DevGate
 walks the chain from right to left, keeps the first untrusted client boundary
 and the trusted proxy suffix, and discards spoofed values to the left of that
 boundary.
+
+## Router benchmarks
+
+Run the router benchmarks without executing the regular test suite:
+
+```shell
+go test -run '^$' -bench '^BenchmarkRouter' -benchmem ./internal/router
+```
+
+Use multiple runs when comparing changes so that normal measurement noise is
+visible:
+
+```shell
+go test -run '^$' -bench '^BenchmarkRouter' -benchmem -count=5 ./internal/router
+```
+
+The suite covers successful matching across different routing-table sizes, the
+method-not-allowed lookup path, and concurrent matching against an immutable
+routing table.
