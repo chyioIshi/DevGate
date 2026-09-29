@@ -20,12 +20,17 @@ type RequestHeaderTransform func(http.Header)
 // the upstream server before it is sent to the client.
 type ResponseHeaderTransform func(http.Header)
 
+// ErrorResponder writes a gateway-generated HTTP error for a failed proxy
+// request.
+type ErrorResponder func(http.ResponseWriter, *http.Request, int)
+
 func New(
 	targetURL *url.URL,
 	transport http.RoundTripper,
 	requestHeaderTransform RequestHeaderTransform,
 	responseHeaderTransform ResponseHeaderTransform,
 	trustedCIDRs []netip.Prefix,
+	errorResponder ErrorResponder,
 	logger *slog.Logger,
 ) *httputil.ReverseProxy {
 	trustedCIDRs = slices.Clone(trustedCIDRs)
@@ -60,11 +65,15 @@ func New(
 				"error", err,
 			)
 			statusCode := statusCodeForProxyError(err)
-			http.Error(
-				rw,
-				http.StatusText(statusCode),
-				statusCode,
-			)
+			if errorResponder != nil {
+				errorResponder(rw, req, statusCode)
+			} else {
+				http.Error(
+					rw,
+					http.StatusText(statusCode),
+					statusCode,
+				)
+			}
 		},
 	}
 	return proxy

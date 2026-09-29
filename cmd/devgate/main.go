@@ -45,6 +45,10 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load routes from config: %w", err)
 	}
+	globalErrorResponder, err := globalErrorResponderFromConfig(cfg.ErrorResponses)
+	if err != nil {
+		return fmt.Errorf("load global error responses: %w", err)
+	}
 	routeRouter, err := router.New(routes)
 	if err != nil {
 		return fmt.Errorf("build routing table: %w", err)
@@ -79,9 +83,23 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("create route handlers: %w", err)
 	}
 
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger, httpMetrics)
-	requestIDHandler := requestid.Middleware(gatewayHandler, logger)
-	mux := newHTTPMux(requestIDHandler, metrics.Handler(promRegistry))
+	gatewayHandler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		globalErrorResponder.Write,
+		logger,
+		httpMetrics,
+	)
+	requestIDHandler := requestid.Middleware(
+		gatewayHandler,
+		globalErrorResponder.Write,
+		logger,
+	)
+	mux := newHTTPMux(
+		requestIDHandler,
+		metrics.Handler(promRegistry),
+		globalErrorResponder.Write,
+	)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
@@ -149,12 +167,17 @@ func serve(ctx context.Context, server *http.Server, logger *slog.Logger, shutdo
 	}
 }
 
-func newHTTPMux(gatewayHandler http.Handler, metricsHandler http.Handler) *http.ServeMux {
+func newHTTPMux(
+	gatewayHandler http.Handler,
+	metricsHandler http.Handler,
+	responder func(http.ResponseWriter, *http.Request, int),
+) *http.ServeMux {
 	mux := http.NewServeMux()
+	notAllowedHandler := methodNotAllowedHandler(responder)
 	mux.HandleFunc("GET /healthz", healthHandler)
-	mux.HandleFunc("/healthz", methodNotAllowedHandler)
+	mux.HandleFunc("/healthz", notAllowedHandler)
 	mux.Handle("GET /metrics", metricsHandler)
-	mux.HandleFunc("/metrics", methodNotAllowedHandler)
+	mux.HandleFunc("/metrics", notAllowedHandler)
 	mux.Handle("/", gatewayHandler)
 	return mux
 }
@@ -165,7 +188,19 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte("ok\n"))
 }
 
-func methodNotAllowedHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Allow", "GET, HEAD")
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func methodNotAllowedHandler(
+	responder func(http.ResponseWriter, *http.Request, int),
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Allow", "GET, HEAD")
+		if responder != nil {
+			responder(w, r, http.StatusMethodNotAllowed)
+		} else {
+			http.Error(
+				w,
+				http.StatusText(http.StatusMethodNotAllowed),
+				http.StatusMethodNotAllowed,
+			)
+		}
+	}
 }

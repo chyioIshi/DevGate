@@ -5,11 +5,23 @@ import (
 	"net/http"
 )
 
+// ErrorResponder writes an HTTP error for a request rejected by the body
+// limit.
+type ErrorResponder func(
+	http.ResponseWriter,
+	*http.Request,
+	int,
+)
+
 // New creates an HTTP handler that limits each request body to maxBytes. It
 // rejects a known Content-Length above the limit before delegating to next;
 // otherwise, reading beyond the limit returns an *http.MaxBytesError. New
 // returns an error if next is nil or maxBytes is not positive.
-func New(next http.Handler, maxBytes int64) (http.Handler, error) {
+func New(
+	next http.Handler,
+	maxBytes int64,
+	errorResponder ErrorResponder,
+) (http.Handler, error) {
 	if next == nil {
 		return nil, errors.New("next handler must not be nil")
 	}
@@ -18,11 +30,15 @@ func New(next http.Handler, maxBytes int64) (http.Handler, error) {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > maxBytes {
-			http.Error(
-				w,
-				http.StatusText(http.StatusRequestEntityTooLarge),
-				http.StatusRequestEntityTooLarge,
-			)
+			if errorResponder != nil {
+				errorResponder(w, r, http.StatusRequestEntityTooLarge)
+			} else {
+				http.Error(
+					w,
+					http.StatusText(http.StatusRequestEntityTooLarge),
+					http.StatusRequestEntityTooLarge,
+				)
+			}
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)

@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/netip"
 	"time"
 
 	"github.com/chyioishi/devgate/internal/directresponse"
+	"github.com/chyioishi/devgate/internal/errorresponse"
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/ratelimit"
@@ -62,6 +64,14 @@ func handlersFromRoutes(
 			)
 		}
 
+		errorResponses := errorResponsesFromRoute(
+			route.ErrorResponses,
+		)
+		routeErrorResponder, err := errorresponse.New(errorResponses)
+		if err != nil {
+			return nil, fmt.Errorf("create error responder for route %q: %w", route.Name, err)
+		}
+
 		switch {
 		case route.UpstreamURL != nil:
 			switch route.Protocol {
@@ -88,6 +98,7 @@ func handlersFromRoutes(
 					requestHeaderTransform,
 					responseHeaderTransform,
 					trustedCIDRs,
+					routeErrorResponder.Write,
 					logger,
 				)
 
@@ -99,6 +110,7 @@ func handlersFromRoutes(
 					routeHandler, err = requestbodylimit.New(
 						routeHandler,
 						route.MaxRequestBodyBytes,
+						routeErrorResponder.Write,
 					)
 					if err != nil {
 						return nil, fmt.Errorf(
@@ -174,10 +186,26 @@ func handlersFromRoutes(
 				)
 			}
 			limiterMetrics := rateLimiterMetrics.ForRoute(route.Name)
-			routeHandler = ratelimit.Middleware(routeHandler, limiter, limiterMetrics)
+			routeHandler = ratelimit.Middleware(
+				routeHandler,
+				limiter, limiterMetrics,
+				routeErrorResponder.Write,
+			)
 		}
 		handlers[route.Name] = routeHandler
 	}
 
 	return handlers, nil
+}
+
+func errorResponsesFromRoute(routeErrorResponses map[int]router.ErrorResponse) map[int]errorresponse.Response {
+	errorResponses := make(map[int]errorresponse.Response, len(routeErrorResponses))
+
+	for statusCode, routeErrorResponse := range routeErrorResponses {
+		errorResponses[statusCode] = errorresponse.Response{
+			Body:    routeErrorResponse.Body,
+			Headers: maps.Clone(routeErrorResponse.Headers),
+		}
+	}
+	return errorResponses
 }

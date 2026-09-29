@@ -1,3 +1,17 @@
+error_responses:
+  404:
+    body: '{"error":"route not found"}'
+    headers:
+      Content-Type: application/json
+  405:
+    body: '{"error":"method not allowed"}'
+    headers:
+      Content-Type: application/json
+  500:
+    body: '{"error":"internal server error"}'
+    headers:
+      Content-Type: application/json
+
 routes:
   - name: users
     protocol: http
@@ -17,6 +31,15 @@ routes:
         X-Gateway-Response: DevGate
       remove:
         - X-Legacy-Response-Header
+    error_responses:
+      429:
+        body: '{"error":"rate limit exceeded"}'
+        headers:
+          Content-Type: application/json
+      502:
+        body: '{"error":"upstream unavailable"}'
+        headers:
+          Content-Type: application/json
     rate_limit:
       requests_per_second: 100
       burst: 200
