@@ -68,12 +68,14 @@ func TestGatewayProxiesWebSocketConnection(t *testing.T) {
 	gatewayHandler := gateway.New(
 		routeRouter,
 		routeHandlers,
+		nil,
 		logger,
 		metrics.NewHTTP(registry),
 	)
 	handler := newHTTPMux(
-		requestid.Middleware(gatewayHandler, logger),
+		requestid.Middleware(gatewayHandler, nil, logger),
 		metrics.Handler(registry),
+		nil,
 	)
 	gatewayServer := httptest.NewServer(handler)
 	defer gatewayServer.Close()

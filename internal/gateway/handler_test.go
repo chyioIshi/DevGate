@@ -36,10 +36,11 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 				_, _ = io.WriteString(w, "api")
 			}),
 		},
+		nil,
 		logger,
 		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
-	handler := requestid.Middleware(gatewayHandler, logger)
+	handler := requestid.Middleware(gatewayHandler, nil, logger)
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
@@ -96,6 +97,7 @@ func TestHandlerDispatchesByHost(t *testing.T) {
 				_, _ = io.WriteString(w, "internal")
 			}),
 		},
+		nil,
 		discardLogger(),
 		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
@@ -154,6 +156,7 @@ func TestHandlerReturnsNotFoundForUnknownHost(t *testing.T) {
 				handlerCalled = true
 			}),
 		},
+		nil,
 		discardLogger(),
 		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
@@ -204,6 +207,7 @@ func TestHandlerReturnsMethodNotAllowed(t *testing.T) {
 				handlerCalled = true
 			}),
 		},
+		nil,
 		logger,
 		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
@@ -278,6 +282,7 @@ func TestHandlerClassifiesMethodMismatchAfterHeaderMatching(t *testing.T) {
 						handlerCalled = true
 					}),
 				},
+				nil,
 				discardLogger(),
 				metrics.NewHTTP(prometheus.NewRegistry()),
 			)
@@ -321,6 +326,7 @@ func TestHandlerReturnsNotFoundWhenRouteDoesNotMatch(t *testing.T) {
 				handlerCalled = true
 			}),
 		},
+		nil,
 		logger,
 		metrics.NewHTTP(prometheus.NewRegistry()),
 	)
@@ -356,7 +362,7 @@ func TestHandlerReturnsInternalServerErrorWhenRouteHandlerIsMissing(t *testing.T
 			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
 		},
 	})
-	handler := gateway.New(routeRouter, nil, logger, metrics.NewHTTP(prometheus.NewRegistry()))
+	handler := gateway.New(routeRouter, nil, nil, logger, metrics.NewHTTP(prometheus.NewRegistry()))
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
@@ -380,6 +386,98 @@ func TestHandlerReturnsInternalServerErrorWhenRouteHandlerIsMissing(t *testing.T
 	})
 }
 
+func TestHandlerUsesErrorResponder(t *testing.T) {
+	tests := []struct {
+		name          string
+		route         router.Route
+		routeHandlers map[string]http.Handler
+		method        string
+		path          string
+		wantStatus    int
+		wantAllow     string
+	}{
+		{
+			name: "route not found",
+			route: router.Route{
+				Name:        "api",
+				Protocol:    router.ProtocolHTTP,
+				PathPrefix:  "/api",
+				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			},
+			routeHandlers: map[string]http.Handler{"api": http.NotFoundHandler()},
+			method:        http.MethodGet,
+			path:          "/missing",
+			wantStatus:    http.StatusNotFound,
+		},
+		{
+			name: "method not allowed",
+			route: router.Route{
+				Name:        "api",
+				Protocol:    router.ProtocolHTTP,
+				PathPrefix:  "/api",
+				Methods:     []string{http.MethodGet},
+				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			},
+			routeHandlers: map[string]http.Handler{"api": http.NotFoundHandler()},
+			method:        http.MethodPost,
+			path:          "/api/users",
+			wantStatus:    http.StatusMethodNotAllowed,
+			wantAllow:     http.MethodGet,
+		},
+		{
+			name: "route handler missing",
+			route: router.Route{
+				Name:        "api",
+				Protocol:    router.ProtocolHTTP,
+				PathPrefix:  "/api",
+				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			},
+			method:     http.MethodGet,
+			path:       "/api/users",
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var responderStatus int
+			errorResponder := func(w http.ResponseWriter, _ *http.Request, statusCode int) {
+				responderStatus = statusCode
+				w.Header().Set("X-Custom-Error", "true")
+				w.WriteHeader(statusCode)
+				_, _ = io.WriteString(w, "custom error")
+			}
+			handler := gateway.New(
+				mustNewRouter(t, []router.Route{test.route}),
+				test.routeHandlers,
+				errorResponder,
+				discardLogger(),
+				metrics.NewHTTP(prometheus.NewRegistry()),
+			)
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(test.method, test.path, nil)
+			handler.ServeHTTP(recorder, request)
+
+			if responderStatus != test.wantStatus {
+				t.Errorf("responder status = %d, want %d", responderStatus, test.wantStatus)
+			}
+			if recorder.Code != test.wantStatus {
+				t.Errorf("status code = %d, want %d", recorder.Code, test.wantStatus)
+			}
+			if got, want := recorder.Body.String(), "custom error"; got != want {
+				t.Errorf("body = %q, want %q", got, want)
+			}
+			if got := recorder.Header().Get("X-Custom-Error"); got != "true" {
+				t.Errorf("X-Custom-Error = %q, want %q", got, "true")
+			}
+			if got := recorder.Header().Get("Allow"); got != test.wantAllow {
+				t.Errorf("Allow = %q, want %q", got, test.wantAllow)
+			}
+		})
+	}
+}
+
 func TestNewCopiesRouteHandlers(t *testing.T) {
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
@@ -396,7 +494,13 @@ func TestNewCopiesRouteHandlers(t *testing.T) {
 			originalCalled = true
 		}),
 	}
-	handler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(prometheus.NewRegistry()))
+	handler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		nil,
+		discardLogger(),
+		metrics.NewHTTP(prometheus.NewRegistry()),
+	)
 	routeHandlers["api"] = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		replacementCalled = true
 	})

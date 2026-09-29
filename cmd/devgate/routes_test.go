@@ -39,6 +39,12 @@ func TestRoutesFromConfig(t *testing.T) {
 				Set:    map[string]string{"X-Gateway-Response": "DevGate"},
 				Remove: []string{"X-Legacy-Response-Header"},
 			},
+			ErrorResponses: map[int]config.ErrorResponseConfig{
+				http.StatusBadGateway: {
+					Body:    `{"error":"upstream unavailable"}`,
+					Headers: map[string]string{"Content-Type": "application/json"},
+				},
+			},
 			RateLimit: &config.RateLimitConfig{
 				RequestsPerSecond: 12.5,
 				Burst:             25,
@@ -86,6 +92,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		upstreamURL         string
 		directResponse      *router.DirectResponse
 		redirect            *router.Redirect
+		errorResponses      map[int]router.ErrorResponse
 		requestHeaders      *router.HeaderTransformPolicy
 		responseHeaders     *router.HeaderTransformPolicy
 		rateLimit           *router.RateLimitPolicy
@@ -112,6 +119,12 @@ func TestRoutesFromConfig(t *testing.T) {
 			responseHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway-Response": "DevGate"},
 				Remove: []string{"X-Legacy-Response-Header"},
+			},
+			errorResponses: map[int]router.ErrorResponse{
+				http.StatusBadGateway: {
+					Body:    `{"error":"upstream unavailable"}`,
+					Headers: map[string]string{"Content-Type": "application/json"},
+				},
 			},
 			rateLimit: &router.RateLimitPolicy{
 				RequestsPerSecond: 12.5,
@@ -220,6 +233,14 @@ func TestRoutesFromConfig(t *testing.T) {
 				i,
 				got[i].Redirect,
 				want[i].redirect,
+			)
+		}
+		if !reflect.DeepEqual(got[i].ErrorResponses, want[i].errorResponses) {
+			t.Errorf(
+				"route[%d].ErrorResponses = %+v, want %+v",
+				i,
+				got[i].ErrorResponses,
+				want[i].errorResponses,
 			)
 		}
 		if !reflect.DeepEqual(got[i].RateLimit, want[i].rateLimit) {
@@ -383,6 +404,54 @@ func TestRoutesFromConfigCopiesHeaderPolicies(t *testing.T) {
 	}
 	if name := got[0].ResponseHeaders.Remove[0]; name != "X-Legacy-Header" {
 		t.Errorf("response remove header after request mutation = %q, want %q", name, "X-Legacy-Header")
+	}
+}
+
+func TestRoutesFromConfigCopiesErrorResponses(t *testing.T) {
+	errorResponses := map[int]config.ErrorResponseConfig{
+		http.StatusBadGateway: {
+			Body:    `{"error":"upstream unavailable"}`,
+			Headers: map[string]string{"Content-Type": "application/json"},
+		},
+	}
+	routeConfigs := []config.RouteConfig{
+		{
+			Name:           "users",
+			Protocol:       "http",
+			PathPrefix:     "/api/users",
+			UpstreamURL:    "http://users-service:8080",
+			ErrorResponses: errorResponses,
+		},
+	}
+
+	routes, err := routesFromConfig(routeConfigs)
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+
+	response := errorResponses[http.StatusBadGateway]
+	response.Headers["Content-Type"] = "text/plain"
+	response.Body = "mutated"
+	errorResponses[http.StatusBadGateway] = response
+	errorResponses[http.StatusGatewayTimeout] = config.ErrorResponseConfig{Body: "timeout"}
+
+	got := routes[0].ErrorResponses
+	if len(got) != 1 {
+		t.Fatalf("runtime error responses length = %d, want 1", len(got))
+	}
+	if gotResponse := got[http.StatusBadGateway]; gotResponse.Body != `{"error":"upstream unavailable"}` {
+		t.Errorf(
+			"runtime error response body after config mutation = %q, want %q",
+			gotResponse.Body,
+			`{"error":"upstream unavailable"}`,
+		)
+	}
+	if gotHeader := got[http.StatusBadGateway].Headers["Content-Type"]; gotHeader != "application/json" {
+		t.Errorf(
+			"runtime Content-Type after config mutation = %q, want %q",
+			gotHeader,
+			"application/json",
+		)
 	}
 }
 

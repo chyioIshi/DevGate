@@ -8,7 +8,7 @@ import (
 )
 
 func TestHealthHandler(t *testing.T) {
-	mux := newHTTPMux(http.NotFoundHandler(), http.NotFoundHandler())
+	mux := newHTTPMux(http.NotFoundHandler(), http.NotFoundHandler(), nil)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	w := httptest.NewRecorder()
 
@@ -35,7 +35,7 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestHealthEndpointRejectsUnsupportedMethod(t *testing.T) {
-	mux := newHTTPMux(http.NotFoundHandler(), http.NotFoundHandler())
+	mux := newHTTPMux(http.NotFoundHandler(), http.NotFoundHandler(), nil)
 	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
 	w := httptest.NewRecorder()
 
@@ -69,6 +69,7 @@ func TestMuxRoutesRequestsToProxy(t *testing.T) {
 			},
 		),
 		http.NotFoundHandler(),
+		nil,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -100,6 +101,7 @@ func TestMuxRoutesMetricsOutsideGateway(t *testing.T) {
 			metricsCalled = true
 			w.WriteHeader(http.StatusOK)
 		}),
+		nil,
 	)
 	request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 	recorder := httptest.NewRecorder()
@@ -124,6 +126,7 @@ func TestMetricsEndpointRejectsUnsupportedMethod(t *testing.T) {
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			metricsCalled = true
 		}),
+		nil,
 	)
 	request := httptest.NewRequest(http.MethodPost, "/metrics", nil)
 	recorder := httptest.NewRecorder()
@@ -138,5 +141,52 @@ func TestMetricsEndpointRejectsUnsupportedMethod(t *testing.T) {
 	}
 	if metricsCalled {
 		t.Error("metrics handler was called for an unsupported method")
+	}
+}
+
+func TestManagementEndpointsUseErrorResponderForUnsupportedMethod(t *testing.T) {
+	for _, path := range []string{"/healthz", "/metrics"} {
+		t.Run(path, func(t *testing.T) {
+			var responderStatus int
+			errorResponder := func(w http.ResponseWriter, _ *http.Request, statusCode int) {
+				responderStatus = statusCode
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(statusCode)
+				_, _ = io.WriteString(w, `{"error":"method not allowed"}`)
+			}
+			mux := newHTTPMux(
+				http.NotFoundHandler(),
+				http.NotFoundHandler(),
+				errorResponder,
+			)
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, nil)
+			mux.ServeHTTP(recorder, request)
+
+			if responderStatus != http.StatusMethodNotAllowed {
+				t.Errorf(
+					"responder status = %d, want %d",
+					responderStatus,
+					http.StatusMethodNotAllowed,
+				)
+			}
+			if recorder.Code != http.StatusMethodNotAllowed {
+				t.Errorf(
+					"status code = %d, want %d",
+					recorder.Code,
+					http.StatusMethodNotAllowed,
+				)
+			}
+			if got, want := recorder.Body.String(), `{"error":"method not allowed"}`; got != want {
+				t.Errorf("body = %q, want %q", got, want)
+			}
+			if got, want := recorder.Header().Get("Content-Type"), "application/json"; got != want {
+				t.Errorf("Content-Type = %q, want %q", got, want)
+			}
+			if got, want := recorder.Header().Get("Allow"), "GET, HEAD"; got != want {
+				t.Errorf("Allow = %q, want %q", got, want)
+			}
+		})
 	}
 }

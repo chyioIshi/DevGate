@@ -60,6 +60,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			UpstreamURL:         upstreamURL,
 			DirectResponse:      directResponse,
 			Redirect:            redirect,
+			ErrorResponses:      errorResponsesFromConfig(routeConfig.ErrorResponses),
 			RequestHeaders:      requestHeaders,
 			ResponseHeaders:     responseHeaders,
 			RateLimit:           rateLimit,
@@ -101,4 +102,18 @@ func headerMatchesFromConfig(configHeaderMatches []config.HeaderMatchConfig) []r
 	}
 
 	return routeHeaderMatches
+}
+
+func errorResponsesFromConfig(configErrorResponses map[int]config.ErrorResponseConfig) map[int]router.ErrorResponse {
+	if len(configErrorResponses) == 0 {
+		return nil
+	}
+	errorResponses := make(map[int]router.ErrorResponse, len(configErrorResponses))
+	for statusCode, configErrorResponse := range configErrorResponses {
+		errorResponses[statusCode] = router.ErrorResponse{
+			Body:    configErrorResponse.Body,
+			Headers: maps.Clone(configErrorResponse.Headers),
+		}
+	}
+	return errorResponses
 }

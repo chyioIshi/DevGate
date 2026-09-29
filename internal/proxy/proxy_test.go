@@ -79,7 +79,8 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 		header.Set(requestid.HeaderName, transformRequestID)
 	}
 	gateway := httptest.NewServer(requestid.Middleware(
-		New(targetURL, http.DefaultTransport, nil, responseHeaderTransform, nil, logger),
+		New(targetURL, http.DefaultTransport, nil, responseHeaderTransform, nil, nil, logger),
+		nil,
 		logger,
 	))
 	defer gateway.Close()
@@ -236,6 +237,7 @@ func TestReverseProxyStreamsResponseBody(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.New(slog.DiscardHandler),
 	))
 	defer gateway.Close()
@@ -332,6 +334,7 @@ func TestReverseProxyForwardsResponseTrailers(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.New(slog.DiscardHandler),
 	))
 	defer gateway.Close()
@@ -392,6 +395,7 @@ func TestReverseProxyStreamsRequestBody(t *testing.T) {
 	gateway := httptest.NewServer(New(
 		targetURL,
 		http.DefaultTransport,
+		nil,
 		nil,
 		nil,
 		nil,
@@ -525,6 +529,7 @@ func TestReverseProxyForwardsRequestTrailers(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.New(slog.DiscardHandler),
 	))
 	defer gateway.Close()
@@ -581,6 +586,7 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 		transform,
 		nil,
 		nil,
+		nil,
 		slog.New(slog.DiscardHandler),
 	)
 
@@ -625,6 +631,7 @@ func TestReverseProxyClonesTrustedProxyCIDRs(t *testing.T) {
 		nil,
 		nil,
 		trustedCIDRs,
+		nil,
 		slog.New(slog.DiscardHandler),
 	)
 
@@ -677,8 +684,8 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	proxy := New(targetURL, http.DefaultTransport, nil, nil, nil, logger)
-	handler := requestid.Middleware(proxy, logger)
+	proxy := New(targetURL, http.DefaultTransport, nil, nil, nil, nil, logger)
+	handler := requestid.Middleware(proxy, nil, logger)
 	handler.ServeHTTP(recorder, req)
 
 	resp := recorder.Result()
@@ -724,6 +731,53 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	if logRecord.Error == "" {
 		t.Error("log error is empty")
+	}
+}
+
+func TestReverseProxyDelegatesGatewayErrorToResponder(t *testing.T) {
+	targetURL := &url.URL{Scheme: "http", Host: "upstream.local"}
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	var gotRequest *http.Request
+	var gotStatus int
+	calls := 0
+	errorResponder := func(w http.ResponseWriter, r *http.Request, statusCode int) {
+		calls++
+		gotRequest = r
+		gotStatus = statusCode
+		w.Header().Set("X-Custom-Error", "true")
+		w.WriteHeader(statusCode)
+		_, _ = io.WriteString(w, "custom gateway error")
+	}
+	reverseProxy := New(
+		targetURL,
+		http.DefaultTransport,
+		nil,
+		nil,
+		nil,
+		errorResponder,
+		slog.New(slog.DiscardHandler),
+	)
+	recorder := httptest.NewRecorder()
+
+	reverseProxy.ErrorHandler(recorder, request, errors.New("upstream unavailable"))
+
+	if calls != 1 {
+		t.Errorf("error responder calls = %d, want 1", calls)
+	}
+	if gotRequest != request {
+		t.Errorf("error responder request = %p, want %p", gotRequest, request)
+	}
+	if gotStatus != http.StatusBadGateway {
+		t.Errorf("error responder status = %d, want %d", gotStatus, http.StatusBadGateway)
+	}
+	if recorder.Code != http.StatusBadGateway {
+		t.Errorf("response status = %d, want %d", recorder.Code, http.StatusBadGateway)
+	}
+	if got := recorder.Header().Get("X-Custom-Error"); got != "true" {
+		t.Errorf("X-Custom-Error = %q, want %q", got, "true")
+	}
+	if got := recorder.Body.String(); got != "custom gateway error" {
+		t.Errorf("response body = %q, want %q", got, "custom gateway error")
 	}
 }
 
@@ -810,6 +864,7 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.New(slog.DiscardHandler),
 	)
 
@@ -873,7 +928,7 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	}
 	defer transport.CloseIdleConnections()
 
-	proxy := New(targetURL, transport, nil, nil, nil, slog.New(slog.DiscardHandler))
+	proxy := New(targetURL, transport, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	recorder := httptest.NewRecorder()
 
@@ -929,6 +984,7 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 	proxy := New(
 		targetURL,
 		retryTransport,
+		nil,
 		nil,
 		nil,
 		nil,

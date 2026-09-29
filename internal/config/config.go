@@ -39,6 +39,7 @@ type Config struct {
 	UpstreamCircuitFailureThreshold int            `env:"DEVGATE_UPSTREAM_CIRCUIT_FAILURE_THRESHOLD"`
 	UpstreamCircuitOpenTimeout      time.Duration  `env:"DEVGATE_UPSTREAM_CIRCUIT_OPEN_TIMEOUT"`
 	TrustedProxyCIDRs               []netip.Prefix `env:"DEVGATE_TRUSTED_PROXY_CIDRS" envSeparator:","`
+	ErrorResponses                  map[int]ErrorResponseConfig
 }
 
 func (c Config) validate() error {
@@ -139,6 +140,7 @@ func Load() (Config, error) {
 	}
 
 	config.Routes = routesConfig.Routes
+	config.ErrorResponses = routesConfig.ErrorResponses
 
 	return config, nil
 }

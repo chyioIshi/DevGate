@@ -38,7 +38,7 @@ func TestMiddlewarePropagatesGeneratedRequestID(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
-	handler := middleware(next, logger, func() (string, error) {
+	handler := middleware(next, nil, logger, func() (string, error) {
 		generateCalls++
 		return generatedID, nil
 	})
@@ -76,7 +76,7 @@ func TestMiddlewareReturnsInternalServerErrorWhenGenerationFails(t *testing.T) {
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		nextCalled = true
 	})
-	handler := middleware(next, logger, func() (string, error) {
+	handler := middleware(next, nil, logger, func() (string, error) {
 		return "", errEntropyUnavailable
 	})
 
@@ -118,6 +118,52 @@ func TestMiddlewareReturnsInternalServerErrorWhenGenerationFails(t *testing.T) {
 	}
 	if !strings.Contains(logRecord.Error, errEntropyUnavailable.Error()) {
 		t.Errorf("logged error = %q, want %q", logRecord.Error, errEntropyUnavailable)
+	}
+}
+
+func TestMiddlewareUsesErrorResponderWhenGenerationFails(t *testing.T) {
+	nextCalled := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		nextCalled = true
+	})
+	var responderStatus int
+	errorResponder := func(w http.ResponseWriter, _ *http.Request, statusCode int) {
+		responderStatus = statusCode
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+	}
+	logger := slog.New(slog.DiscardHandler)
+	handler := middleware(next, errorResponder, logger, func() (string, error) {
+		return "", errors.New("entropy unavailable")
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/users", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if nextCalled {
+		t.Error("next handler was called after request ID generation failure")
+	}
+	if responderStatus != http.StatusInternalServerError {
+		t.Errorf(
+			"responder status = %d, want %d",
+			responderStatus,
+			http.StatusInternalServerError,
+		)
+	}
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf(
+			"status code = %d, want %d",
+			recorder.Code,
+			http.StatusInternalServerError,
+		)
+	}
+	if got, want := recorder.Body.String(), `{"error":"internal server error"}`; got != want {
+		t.Errorf("response body = %q, want %q", got, want)
+	}
+	if got, want := recorder.Header().Get("Content-Type"), "application/json"; got != want {
+		t.Errorf("Content-Type = %q, want %q", got, want)
 	}
 }
 

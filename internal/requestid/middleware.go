@@ -10,6 +10,9 @@ type contextKey struct{}
 
 type generatorFunc func() (string, error)
 
+// ErrorResponder writes an HTTP error when request ID processing fails.
+type ErrorResponder func(http.ResponseWriter, *http.Request, int)
+
 // HeaderName is the HTTP header used to propagate the gateway-generated request ID.
 const HeaderName = "X-Request-ID"
 
@@ -18,17 +21,31 @@ var requestIDKey contextKey
 // Middleware returns an HTTP handler that generates and propagates a request ID.
 func Middleware(
 	next http.Handler,
+	errorResponder ErrorResponder,
 	logger *slog.Logger,
 ) http.Handler {
-	return middleware(next, logger, Generate)
+	return middleware(next, errorResponder, logger, Generate)
 }
 
-func middleware(next http.Handler, logger *slog.Logger, generate generatorFunc) http.Handler {
+func middleware(
+	next http.Handler,
+	errorResponder ErrorResponder,
+	logger *slog.Logger,
+	generate generatorFunc,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID, err := generate()
 		if err != nil {
 			logger.ErrorContext(r.Context(), "generate request ID", "error", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			if errorResponder != nil {
+				errorResponder(w, r, http.StatusInternalServerError)
+			} else {
+				http.Error(
+					w,
+					http.StatusText(http.StatusInternalServerError),
+					http.StatusInternalServerError,
+				)
+			}
 			return
 		}
 

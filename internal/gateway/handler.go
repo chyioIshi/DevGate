@@ -12,25 +12,31 @@ import (
 	"github.com/chyioishi/devgate/internal/router"
 )
 
+// ErrorResponder writes a gateway-generated HTTP error response.
+type ErrorResponder func(http.ResponseWriter, *http.Request, int)
+
 type Handler struct {
-	routeRouter   *router.Router
-	routeHandlers map[string]http.Handler
-	logger        *slog.Logger
-	httpMetrics   *metrics.HTTP
+	routeRouter    *router.Router
+	routeHandlers  map[string]http.Handler
+	errorResponder ErrorResponder
+	logger         *slog.Logger
+	httpMetrics    *metrics.HTTP
 }
 
 func New(
 	routeRouter *router.Router,
 	routeHandlers map[string]http.Handler,
+	errorResponder ErrorResponder,
 	logger *slog.Logger,
 	httpMetrics *metrics.HTTP,
 ) *Handler {
 	routeHandlersCopy := maps.Clone(routeHandlers)
 	return &Handler{
-		routeRouter:   routeRouter,
-		routeHandlers: routeHandlersCopy,
-		logger:        logger,
-		httpMetrics:   httpMetrics,
+		routeRouter:    routeRouter,
+		routeHandlers:  routeHandlersCopy,
+		errorResponder: errorResponder,
+		logger:         logger,
+		httpMetrics:    httpMetrics,
 	}
 }
 
@@ -59,7 +65,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"duration_ms", time.Since(startedAt).Seconds()*1000,
 		)
 	}()
-	defer recoverPanic(rw, r, h.logger)
+	defer recoverPanic(rw, r, h.writeError, h.logger)
 
 	route, ok := h.routeRouter.Match(r.Method, r.Host, r.URL.Path, r.Header)
 	if !ok {
@@ -69,14 +75,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"Allow",
 				strings.Join(allowedMethods, ", "),
 			)
-			http.Error(
-				rw,
-				http.StatusText(http.StatusMethodNotAllowed),
-				http.StatusMethodNotAllowed,
-			)
+			h.writeError(rw, r, http.StatusMethodNotAllowed)
 			return
 		}
-		http.NotFound(rw, r)
+		h.writeError(rw, r, http.StatusNotFound)
 		return
 	}
 	routeName = route.Name
@@ -84,9 +86,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	routeHandler, exists := h.routeHandlers[route.Name]
 
 	if !exists {
-		http.Error(rw, "route handler not found", http.StatusInternalServerError)
+		h.writeError(rw, r, http.StatusInternalServerError)
 		return
 	}
 
 	routeHandler.ServeHTTP(rw, r)
+}
+
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, statusCode int) {
+	if h.errorResponder != nil {
+		h.errorResponder(w, r, statusCode)
+	} else {
+		http.Error(
+			w,
+			http.StatusText(statusCode),
+			statusCode,
+		)
+	}
 }

@@ -71,7 +71,13 @@ func TestConfiguredRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(registry))
+	gatewayHandler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		nil,
+		discardLogger(),
+		metrics.NewHTTP(registry),
+	)
 
 	tests := []struct {
 		name       string
@@ -150,6 +156,7 @@ func TestConfiguredDirectResponseRouteReturnsWithoutUpstream(t *testing.T) {
 	gatewayHandler := gateway.New(
 		routeRouter,
 		routeHandlers,
+		nil,
 		discardLogger(),
 		metrics.NewHTTP(registry),
 	)
@@ -214,6 +221,7 @@ func TestConfiguredRedirectRouteReturnsWithoutUpstream(t *testing.T) {
 	gatewayHandler := gateway.New(
 		routeRouter,
 		routeHandlers,
+		nil,
 		discardLogger(),
 		metrics.NewHTTP(registry),
 	)
@@ -288,7 +296,13 @@ func TestConfiguredExactRouteTakesPrecedenceOverPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(registry))
+	gatewayHandler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		nil,
+		discardLogger(),
+		metrics.NewHTTP(registry),
+	)
 
 	tests := []struct {
 		name     string
@@ -384,7 +398,13 @@ func TestConfiguredHeaderRoutesDispatchToDifferentUpstreams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, discardLogger(), metrics.NewHTTP(registry))
+	gatewayHandler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		nil,
+		discardLogger(),
+		metrics.NewHTTP(registry),
+	)
 
 	tests := []struct {
 		name       string
@@ -407,7 +427,7 @@ func TestConfiguredHeaderRoutesDispatchToDifferentUpstreams(t *testing.T) {
 		{
 			name:       "missing header",
 			wantStatus: http.StatusNotFound,
-			wantBody:   "404 page not found\n",
+			wantBody:   "Not Found\n",
 		},
 	}
 
@@ -472,10 +492,11 @@ func TestRequestIDIsPropagatedThroughGateway(t *testing.T) {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
 	httpMetrics := metrics.NewHTTP(registry)
-	gatewayHandler := gateway.New(routeRouter, routeHandlers, logger, httpMetrics)
+	gatewayHandler := gateway.New(routeRouter, routeHandlers, nil, logger, httpMetrics)
 	handler := newHTTPMux(
-		requestid.Middleware(gatewayHandler, logger),
+		requestid.Middleware(gatewayHandler, nil, logger),
 		metrics.Handler(registry),
+		nil,
 	)
 
 	request := httptest.NewRequest(http.MethodGet, "/users", nil)

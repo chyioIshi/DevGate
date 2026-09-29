@@ -8,7 +8,12 @@ import (
 	"github.com/chyioishi/devgate/internal/requestid"
 )
 
-func recoverPanic(w *responseWriter, r *http.Request, logger *slog.Logger) {
+func recoverPanic(
+	w *responseWriter,
+	r *http.Request,
+	errorResponder ErrorResponder,
+	logger *slog.Logger,
+) {
 	rec := recover()
 	if rec == nil {
 		return
@@ -26,7 +31,7 @@ func recoverPanic(w *responseWriter, r *http.Request, logger *slog.Logger) {
 		"stack", string(debug.Stack()),
 	)
 	if !w.wroteHeader {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		errorResponder(w, r, http.StatusInternalServerError)
 	} else {
 		panic(http.ErrAbortHandler)
 	}

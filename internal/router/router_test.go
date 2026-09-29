@@ -1,6 +1,7 @@
 package router
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"net/url"
@@ -1184,6 +1185,225 @@ func TestNewAllowsProxyResponseLocationTransform(t *testing.T) {
 	}
 	if got == nil {
 		t.Fatal("New() router = nil, want non-nil router")
+	}
+}
+
+func TestNewAcceptsSupportedCustomErrorResponses(t *testing.T) {
+	for _, statusCode := range []int{
+		http.StatusRequestEntityTooLarge,
+		http.StatusTooManyRequests,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+	} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			route := Route{
+				Name:        "users",
+				Protocol:    ProtocolHTTP,
+				PathPrefix:  "/api/users",
+				UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				ErrorResponses: map[int]ErrorResponse{
+					statusCode: {},
+				},
+			}
+			switch statusCode {
+			case http.StatusRequestEntityTooLarge:
+				route.MaxRequestBodyBytes = 1024
+			case http.StatusTooManyRequests:
+				route.RateLimit = &RateLimitPolicy{
+					RequestsPerSecond: 10,
+					Burst:             20,
+				}
+			}
+
+			got, err := New([]Route{route})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if got == nil {
+				t.Fatal("New() router = nil, want non-nil router")
+			}
+		})
+	}
+}
+
+func TestNewRejectsInapplicableCustomErrorResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		route       Route
+		wantMessage string
+	}{
+		{
+			name: "413 without request body limit",
+			route: Route{
+				Name:        "users",
+				Protocol:    ProtocolHTTP,
+				PathPrefix:  "/api/users",
+				UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				ErrorResponses: map[int]ErrorResponse{
+					http.StatusRequestEntityTooLarge: {},
+				},
+			},
+			wantMessage: "error response for status code 413 requires max request body bytes",
+		},
+		{
+			name: "429 without rate limit",
+			route: Route{
+				Name:        "users",
+				Protocol:    ProtocolHTTP,
+				PathPrefix:  "/api/users",
+				UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				ErrorResponses: map[int]ErrorResponse{
+					http.StatusTooManyRequests: {},
+				},
+			},
+			wantMessage: "error response for status code 429 requires rate limit",
+		},
+	}
+	for _, statusCode := range []int{
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+	} {
+		tests = append(tests, struct {
+			name        string
+			route       Route
+			wantMessage string
+		}{
+			name: http.StatusText(statusCode) + " without upstream",
+			route: Route{
+				Name:       "maintenance",
+				PathPrefix: "/api",
+				DirectResponse: &DirectResponse{
+					StatusCode: http.StatusServiceUnavailable,
+				},
+				ErrorResponses: map[int]ErrorResponse{statusCode: {}},
+			},
+			wantMessage: fmt.Sprintf(
+				"error response for status code %d requires an upstream route",
+				statusCode,
+			),
+		})
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New([]Route{test.route})
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestNewValidatesCustomErrorResponse(t *testing.T) {
+	tests := []struct {
+		name          string
+		statusCode    int
+		errorResponse ErrorResponse
+		wantMessage   string
+	}{
+		{
+			name:       "body and headers are valid",
+			statusCode: http.StatusBadGateway,
+			errorResponse: ErrorResponse{
+				Body: `{"error":"upstream unavailable"}`,
+				Headers: map[string]string{
+					"Content-Type":  "application/json",
+					"Cache-Control": "no-store",
+				},
+			},
+		},
+		{
+			name:          "body without headers is valid",
+			statusCode:    http.StatusBadGateway,
+			errorResponse: ErrorResponse{Body: "upstream unavailable"},
+		},
+		{
+			name:       "unsupported status is rejected",
+			statusCode: http.StatusInternalServerError,
+			wantMessage: "error response status code must be one of " +
+				"413, 429, 502, 503, or 504",
+		},
+		{
+			name:       "invalid header name is rejected",
+			statusCode: http.StatusBadGateway,
+			errorResponse: ErrorResponse{
+				Headers: map[string]string{"Invalid Header": "value"},
+			},
+			wantMessage: `invalid header name "Invalid Header"`,
+		},
+		{
+			name:       "invalid header value is rejected",
+			statusCode: http.StatusBadGateway,
+			errorResponse: ErrorResponse{
+				Headers: map[string]string{"X-Reason": "failed\r\nX-Evil: true"},
+			},
+			wantMessage: `invalid value for header "X-Reason"`,
+		},
+		{
+			name:       "reserved header is rejected",
+			statusCode: http.StatusBadGateway,
+			errorResponse: ErrorResponse{
+				Headers: map[string]string{"cOnTeNt-LeNgTh": "10"},
+			},
+			wantMessage: `header "cOnTeNt-LeNgTh" is reserved and cannot be modified`,
+		},
+		{
+			name:       "case insensitive duplicate header is rejected",
+			statusCode: http.StatusBadGateway,
+			errorResponse: ErrorResponse{
+				Headers: map[string]string{
+					"Content-Type": "application/json",
+					"content-type": "text/plain",
+				},
+			},
+			wantMessage: "duplicate header name",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New([]Route{
+				{
+					Name:        "users",
+					Protocol:    ProtocolHTTP,
+					PathPrefix:  "/api/users",
+					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					ErrorResponses: map[int]ErrorResponse{
+						test.statusCode: test.errorResponse,
+					},
+				},
+			})
+			if test.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("New() error = %v", err)
+				}
+				if got == nil {
+					t.Fatal("New() router = nil, want non-nil router")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("New() error = nil, want error containing %q", test.wantMessage)
+			}
+			if got != nil {
+				t.Errorf("New() router = %#v, want nil", got)
+			}
+			if !strings.Contains(err.Error(), "error responses validation") {
+				t.Errorf("New() error = %q, want error responses context", err)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("New() error = %q, want context %q", err, test.wantMessage)
+			}
+		})
 	}
 }
 

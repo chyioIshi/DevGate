@@ -52,6 +52,7 @@ func TestCircuitBreakerMetricsTrackRouteLifecycle(t *testing.T) {
 	handler := gateway.New(
 		routeRouter,
 		routeHandlers,
+		nil,
 		discardLogger(),
 		metrics.NewHTTP(registry),
 	)

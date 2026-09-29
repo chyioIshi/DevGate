@@ -111,6 +111,56 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesAppliesCustomProxyErrorResponse(t *testing.T) {
+	routes := []router.Route{
+		{
+			Name:        "users",
+			Protocol:    router.ProtocolHTTP,
+			PathPrefix:  "/api/users",
+			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			ErrorResponses: map[int]router.ErrorResponse{
+				http.StatusBadGateway: {
+					Body: `{"error":"upstream unavailable"}`,
+					Headers: map[string]string{
+						"Content-Type":  "application/json",
+						"Cache-Control": "no-store",
+					},
+				},
+			},
+		},
+	}
+	handlers, err := handlersFromRoutes(
+		routes,
+		&errorRoundTripper{err: errors.New("upstream unavailable")},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/api/users", nil)
+	handlers["users"].ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusBadGateway)
+	}
+	if got := recorder.Body.String(); got != `{"error":"upstream unavailable"}` {
+		t.Errorf("body = %q, want %q", got, `{"error":"upstream unavailable"}`)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store")
+	}
+}
+
 func TestHandlersFromRoutesCreatesDirectResponseHandler(t *testing.T) {
 	transport := &countingRoundTripper{}
 	routes := []router.Route{
@@ -231,6 +281,12 @@ func TestHandlersFromRoutesAppliesRateLimitToDirectResponse(t *testing.T) {
 				RequestsPerSecond: 1,
 				Burst:             1,
 			},
+			ErrorResponses: map[int]router.ErrorResponse{
+				http.StatusTooManyRequests: {
+					Body:    `{"error":"rate limit exceeded"}`,
+					Headers: map[string]string{"Content-Type": "application/json"},
+				},
+			},
 		},
 	}
 
@@ -259,6 +315,12 @@ func TestHandlersFromRoutesAppliesRateLimitToDirectResponse(t *testing.T) {
 	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "http://gateway.local/api", nil))
 	if second.Code != http.StatusTooManyRequests {
 		t.Errorf("second status code = %d, want %d", second.Code, http.StatusTooManyRequests)
+	}
+	if got := second.Body.String(); got != `{"error":"rate limit exceeded"}` {
+		t.Errorf("second body = %q, want %q", got, `{"error":"rate limit exceeded"}`)
+	}
+	if got := second.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("second Content-Type = %q, want %q", got, "application/json")
 	}
 }
 
@@ -384,6 +446,19 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 				},
 			},
 			wantMessage: "create redirect handler",
+		},
+		{
+			name: "invalid custom error response status",
+			route: router.Route{
+				Name:        "invalid-error-response",
+				Protocol:    router.ProtocolHTTP,
+				PathPrefix:  "/api",
+				UpstreamURL: mustParseRouteURL(t, "http://api-service:8080"),
+				ErrorResponses: map[int]router.ErrorResponse{
+					http.StatusOK: {},
+				},
+			},
+			wantMessage: "create error responder for route",
 		},
 	}
 
@@ -900,24 +975,35 @@ func TestHandlersFromRoutesRejectsNegativeRequestTimeout(t *testing.T) {
 
 func TestHandlersFromRoutesAppliesRequestBodyLimit(t *testing.T) {
 	tests := []struct {
-		name          string
-		body          string
-		wantBody      string
-		wantStatus    int
-		unknownLength bool
+		name              string
+		body              string
+		wantUpstreamBody  string
+		wantResponseBody  string
+		wantStatus        int
+		wantUpstreamCalls int
+		unknownLength     bool
 	}{
 		{
-			name:       "body at limit",
-			body:       "data",
-			wantBody:   "data",
-			wantStatus: http.StatusNoContent,
+			name:              "body at limit",
+			body:              "data",
+			wantUpstreamBody:  "data",
+			wantStatus:        http.StatusNoContent,
+			wantUpstreamCalls: 1,
 		},
 		{
-			name:          "body exceeds limit",
-			body:          "data!",
-			wantBody:      "data",
-			wantStatus:    http.StatusRequestEntityTooLarge,
-			unknownLength: true,
+			name:             "known body length exceeds limit",
+			body:             "data!",
+			wantResponseBody: `{"error":"request body too large"}`,
+			wantStatus:       http.StatusRequestEntityTooLarge,
+		},
+		{
+			name:              "unknown body length exceeds limit",
+			body:              "data!",
+			wantUpstreamBody:  "data",
+			wantResponseBody:  `{"error":"request body too large"}`,
+			wantStatus:        http.StatusRequestEntityTooLarge,
+			wantUpstreamCalls: 1,
+			unknownLength:     true,
 		},
 	}
 
@@ -931,6 +1017,14 @@ func TestHandlersFromRoutesAppliesRequestBodyLimit(t *testing.T) {
 					PathPrefix:          "/api/users",
 					UpstreamURL:         mustParseRouteURL(t, "http://users-service:8080"),
 					MaxRequestBodyBytes: 4,
+					ErrorResponses: map[int]router.ErrorResponse{
+						http.StatusRequestEntityTooLarge: {
+							Body: `{"error":"request body too large"}`,
+							Headers: map[string]string{
+								"Content-Type": "application/json",
+							},
+						},
+					},
 				},
 			}
 
@@ -962,11 +1056,23 @@ func TestHandlersFromRoutesAppliesRequestBodyLimit(t *testing.T) {
 			if response.Code != test.wantStatus {
 				t.Errorf("status code = %d, want %d", response.Code, test.wantStatus)
 			}
-			if transport.calls != 1 {
-				t.Errorf("upstream RoundTrip() calls = %d, want 1", transport.calls)
+			if transport.calls != test.wantUpstreamCalls {
+				t.Errorf(
+					"upstream RoundTrip() calls = %d, want %d",
+					transport.calls,
+					test.wantUpstreamCalls,
+				)
 			}
-			if string(transport.body) != test.wantBody {
-				t.Errorf("upstream body = %q, want %q", transport.body, test.wantBody)
+			if string(transport.body) != test.wantUpstreamBody {
+				t.Errorf("upstream body = %q, want %q", transport.body, test.wantUpstreamBody)
+			}
+			if got := response.Body.String(); got != test.wantResponseBody {
+				t.Errorf("response body = %q, want %q", got, test.wantResponseBody)
+			}
+			if test.wantResponseBody != "" {
+				if got := response.Header().Get("Content-Type"); got != "application/json" {
+					t.Errorf("Content-Type = %q, want %q", got, "application/json")
+				}
 			}
 		})
 	}
@@ -1008,6 +1114,14 @@ func TestHandlersFromRoutesRejectsNegativeRequestBodyLimit(t *testing.T) {
 
 type countingRoundTripper struct {
 	calls int
+}
+
+type errorRoundTripper struct {
+	err error
+}
+
+func (t *errorRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, t.err
 }
 
 type bodyReadingRoundTripper struct {
