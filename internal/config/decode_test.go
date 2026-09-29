@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,6 +10,15 @@ import (
 
 func TestDecodeConfig(t *testing.T) {
 	input := `
+error_responses:
+  404:
+    body: '{"error":"not found"}'
+    headers:
+      Content-Type: application/json
+  500:
+    body: '{"error":"internal server error"}'
+    headers:
+      Content-Type: application/json
 routes:
   - name: users
     protocol: http
@@ -40,6 +50,15 @@ routes:
         X-Gateway-Response: DevGate
       remove:
         - X-Legacy-Response-Header
+    error_responses:
+      429:
+        body: '{"error":"rate limit exceeded"}'
+        headers:
+          Content-Type: application/json
+      502:
+        body: '{"error":"upstream unavailable"}'
+        headers:
+          Content-Type: application/json
     rate_limit:
       requests_per_second: 10.5
       burst: 20
@@ -90,6 +109,16 @@ routes:
 				Set:    map[string]string{"X-Gateway-Response": "DevGate"},
 				Remove: []string{"X-Legacy-Response-Header"},
 			},
+			ErrorResponses: map[int]ErrorResponseConfig{
+				http.StatusTooManyRequests: {
+					Body:    `{"error":"rate limit exceeded"}`,
+					Headers: map[string]string{"Content-Type": "application/json"},
+				},
+				http.StatusBadGateway: {
+					Body:    `{"error":"upstream unavailable"}`,
+					Headers: map[string]string{"Content-Type": "application/json"},
+				},
+			},
 			RateLimit: &RateLimitConfig{
 				RequestsPerSecond: 10.5,
 				Burst:             20,
@@ -125,6 +154,16 @@ routes:
 			},
 		},
 	}
+	wantErrorResponses := map[int]ErrorResponseConfig{
+		http.StatusNotFound: {
+			Body:    `{"error":"not found"}`,
+			Headers: map[string]string{"Content-Type": "application/json"},
+		},
+		http.StatusInternalServerError: {
+			Body:    `{"error":"internal server error"}`,
+			Headers: map[string]string{"Content-Type": "application/json"},
+		},
+	}
 
 	got, err := decodeConfig(strings.NewReader(input))
 	if err != nil {
@@ -133,6 +172,13 @@ routes:
 
 	if !reflect.DeepEqual(got.Routes, want) {
 		t.Errorf("decodeConfig().Routes = %+v, want %+v", got.Routes, want)
+	}
+	if !reflect.DeepEqual(got.ErrorResponses, wantErrorResponses) {
+		t.Errorf(
+			"decodeConfig().ErrorResponses = %+v, want %+v",
+			got.ErrorResponses,
+			wantErrorResponses,
+		)
 	}
 }
 
@@ -288,6 +334,65 @@ routes:
 		t.Errorf("decodeConfig() error = %q, want decoding context", err)
 	}
 	if !strings.Contains(err.Error(), `unknown field "target"`) {
+		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownErrorResponseField(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+    error_responses:
+      502:
+        body: upstream unavailable
+        template: error.html
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want unknown field error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "decode YAML config") {
+		t.Errorf("decodeConfig() error = %q, want decoding context", err)
+	}
+	if !strings.Contains(err.Error(), `unknown field "template"`) {
+		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownGlobalErrorResponseField(t *testing.T) {
+	input := `
+error_responses:
+  404:
+    body: not found
+    template: error.html
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want unknown field error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if got.ErrorResponses != nil {
+		t.Errorf("decodeConfig().ErrorResponses = %+v, want nil", got.ErrorResponses)
+	}
+	if !strings.Contains(err.Error(), "decode YAML config") {
+		t.Errorf("decodeConfig() error = %q, want decoding context", err)
+	}
+	if !strings.Contains(err.Error(), `unknown field "template"`) {
 		t.Errorf("decodeConfig() error = %q, want unknown field context", err)
 	}
 }

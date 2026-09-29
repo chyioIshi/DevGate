@@ -39,7 +39,7 @@ func TestNewValidatesArguments(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := New(test.next, test.maxBytes)
+			got, err := New(test.next, test.maxBytes, nil)
 			if err == nil {
 				t.Fatal("New() error = nil, want an error")
 			}
@@ -96,7 +96,7 @@ func TestNewLimitsRequestBody(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			})
 
-			handler, err := New(next, test.maxBytes)
+			handler, err := New(next, test.maxBytes, nil)
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
 			}
@@ -143,7 +143,7 @@ func TestNewRejectsKnownOversizedBodyBeforeReading(t *testing.T) {
 		_, _ = io.ReadAll(r.Body)
 	})
 
-	handler, err := New(next, maxBytes)
+	handler, err := New(next, maxBytes, nil)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -173,6 +173,52 @@ func TestNewRejectsKnownOversizedBodyBeforeReading(t *testing.T) {
 	}
 }
 
+func TestNewDelegatesKnownOversizedBodyToErrorResponder(t *testing.T) {
+	const maxBytes = 4
+
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("data!"))
+	var gotRequest *http.Request
+	var gotStatus int
+	calls := 0
+	errorResponder := func(w http.ResponseWriter, r *http.Request, statusCode int) {
+		calls++
+		gotRequest = r
+		gotStatus = statusCode
+		w.Header().Set("X-Custom-Error", "true")
+		w.WriteHeader(statusCode)
+	}
+	handler, err := New(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Fatal("downstream handler was called for oversized request")
+		}),
+		maxBytes,
+		errorResponder,
+	)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if calls != 1 {
+		t.Errorf("error responder calls = %d, want 1", calls)
+	}
+	if gotRequest != request {
+		t.Errorf("error responder request = %p, want %p", gotRequest, request)
+	}
+	if gotStatus != http.StatusRequestEntityTooLarge {
+		t.Errorf(
+			"error responder status = %d, want %d",
+			gotStatus,
+			http.StatusRequestEntityTooLarge,
+		)
+	}
+	if got := recorder.Header().Get("X-Custom-Error"); got != "true" {
+		t.Errorf("X-Custom-Error = %q, want %q", got, "true")
+	}
+}
+
 func TestNewDoesNotBufferRequestBody(t *testing.T) {
 	const (
 		firstChunk        = "first chunk\n"
@@ -197,7 +243,7 @@ func TestNewDoesNotBufferRequestBody(t *testing.T) {
 		gotBody = append(firstRead, rest...)
 		w.WriteHeader(http.StatusNoContent)
 	})
-	handler, err := New(next, int64(len(firstChunk)+len(secondChunk)))
+	handler, err := New(next, int64(len(firstChunk)+len(secondChunk)), nil)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}

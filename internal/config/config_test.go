@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"io/fs"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -133,6 +134,38 @@ func TestLoadOverrides(t *testing.T) {
 	}
 
 	assertConfigEqual(t, got, want)
+}
+
+func TestLoadGlobalErrorResponses(t *testing.T) {
+	clearConfigEnv(t)
+	configPath := writeConfigFile(t, `
+error_responses:
+  404:
+    body: '{"error":"not found"}'
+    headers:
+      Content-Type: application/json
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+`)
+	t.Setenv(envConfigFile, configPath)
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	want := map[int]ErrorResponseConfig{
+		http.StatusNotFound: {
+			Body:    `{"error":"not found"}`,
+			Headers: map[string]string{"Content-Type": "application/json"},
+		},
+	}
+	if !reflect.DeepEqual(got.ErrorResponses, want) {
+		t.Errorf("Config.ErrorResponses = %+v, want %+v", got.ErrorResponses, want)
+	}
 }
 
 func TestLoadRejectsInvalidTrustedProxyCIDRs(t *testing.T) {
@@ -535,6 +568,13 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 	}
 	if !reflect.DeepEqual(got.Routes, want.Routes) {
 		t.Errorf("Config.Routes = %+v, want %+v", got.Routes, want.Routes)
+	}
+	if !reflect.DeepEqual(got.ErrorResponses, want.ErrorResponses) {
+		t.Errorf(
+			"Config.ErrorResponses = %+v, want %+v",
+			got.ErrorResponses,
+			want.ErrorResponses,
+		)
 	}
 	if !slices.Equal(got.TrustedProxyCIDRs, want.TrustedProxyCIDRs) {
 		t.Errorf(

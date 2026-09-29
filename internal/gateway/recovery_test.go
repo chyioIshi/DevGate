@@ -23,6 +23,7 @@ func TestHandlerRecoversPanicBeforeResponse(t *testing.T) {
 		newHandlerWithRoute(t, logger, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			panic("boom")
 		})),
+		nil,
 		logger,
 	)
 	recorder := httptest.NewRecorder()
@@ -56,6 +57,47 @@ func TestHandlerRecoversPanicBeforeResponse(t *testing.T) {
 	assertRecoveryAccessLog(t, logs[1], http.StatusInternalServerError, int64(recorder.Body.Len()))
 }
 
+func TestHandlerUsesErrorResponderForPanicBeforeResponse(t *testing.T) {
+	logger := discardLogger()
+	errorResponder := func(w http.ResponseWriter, _ *http.Request, statusCode int) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		_, _ = io.WriteString(w, `{"error":"internal server error"}`)
+	}
+	handler := gateway.New(
+		mustNewRouter(t, []router.Route{
+			{
+				Name:        "api",
+				Protocol:    router.ProtocolHTTP,
+				PathPrefix:  "/api",
+				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			},
+		}),
+		map[string]http.Handler{
+			"api": http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				panic("boom")
+			}),
+		},
+		errorResponder,
+		logger,
+		metrics.NewHTTP(prometheus.NewRegistry()),
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Errorf("status code = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+	if got, want := recorder.Body.String(), `{"error":"internal server error"}`; got != want {
+		t.Errorf("response body = %q, want %q", got, want)
+	}
+	if got, want := recorder.Header().Get("Content-Type"), "application/json"; got != want {
+		t.Errorf("Content-Type = %q, want %q", got, want)
+	}
+}
+
 func TestHandlerAbortsPanicAfterResponseStarted(t *testing.T) {
 	logger, logOutput := newTestLogger()
 	handler := requestid.Middleware(
@@ -64,6 +106,7 @@ func TestHandlerAbortsPanicAfterResponseStarted(t *testing.T) {
 			_, _ = w.Write([]byte("partial"))
 			panic("boom")
 		})),
+		nil,
 		logger,
 	)
 	recorder := httptest.NewRecorder()
@@ -150,6 +193,7 @@ func newHandlerWithRoute(t *testing.T, logger *slog.Logger, routeHandler http.Ha
 			},
 		}),
 		map[string]http.Handler{"api": routeHandler},
+		nil,
 		logger,
 		metrics.NewHTTP(prometheus.NewRegistry()),
 	)

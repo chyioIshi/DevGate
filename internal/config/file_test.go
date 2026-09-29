@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -124,6 +125,21 @@ func TestLoadExampleConfig(t *testing.T) {
 			responseHeaders.Remove,
 			[]string{"X-Legacy-Response-Header"},
 		)
+	}
+
+	errorResponse, exists := got.Routes[0].ErrorResponses[http.StatusBadGateway]
+	if !exists {
+		t.Fatal("example config 502 error response is not configured")
+	}
+	if errorResponse.Body != `{"error":"upstream unavailable"}` {
+		t.Errorf(
+			"example config 502 error body = %q, want %q",
+			errorResponse.Body,
+			`{"error":"upstream unavailable"}`,
+		)
+	}
+	if got := errorResponse.Headers["Content-Type"]; got != "application/json" {
+		t.Errorf("example config 502 Content-Type = %q, want %q", got, "application/json")
 	}
 }
 
