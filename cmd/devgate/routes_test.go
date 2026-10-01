@@ -27,7 +27,17 @@ func TestRoutesFromConfig(t *testing.T) {
 				{Name: "X-Environment", Exact: "production"},
 				{Name: "X-API-Version", Exact: "v2"},
 			},
-			UpstreamURL:         "http://users-service:8080",
+			Upstream: &config.UpstreamConfig{
+				LoadBalancing: config.LoadBalancingPolicyRoundRobin,
+				Discovery: &config.UpstreamDiscoveryConfig{
+					Static: &config.StaticUpstreamDiscoveryConfig{
+						Endpoints: []config.UpstreamEndpointConfig{
+							{URL: "http://users-service-1:8080"},
+							{URL: "http://users-service-2:8080"},
+						},
+					},
+				},
+			},
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
 			MaxRequestBodyBytes: 10 * 1024 * 1024,
@@ -89,7 +99,7 @@ func TestRoutesFromConfig(t *testing.T) {
 		hosts               []string
 		headerMatches       []router.HeaderMatch
 		priority            int
-		upstreamURL         string
+		upstreamURLs        []string
 		directResponse      *router.DirectResponse
 		redirect            *router.Redirect
 		errorResponses      map[int]router.ErrorResponse
@@ -111,7 +121,10 @@ func TestRoutesFromConfig(t *testing.T) {
 				{Name: "X-Environment", Exact: "production"},
 				{Name: "X-API-Version", Exact: "v2"},
 			},
-			upstreamURL: "http://users-service:8080",
+			upstreamURLs: []string{
+				"http://users-service-1:8080",
+				"http://users-service-2:8080",
+			},
 			requestHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway": "DevGate"},
 				Remove: []string{"X-Legacy-Header"},
@@ -135,17 +148,17 @@ func TestRoutesFromConfig(t *testing.T) {
 			maxRequestBodyBytes: 10 * 1024 * 1024,
 		},
 		{
-			name:        "greeter",
-			protocol:    router.ProtocolGRPC,
-			pathPrefix:  "/greeter.v1.Greeter",
-			upstreamURL: "http://greeter-service:9090",
+			name:         "greeter",
+			protocol:     router.ProtocolGRPC,
+			pathPrefix:   "/greeter.v1.Greeter",
+			upstreamURLs: []string{"http://greeter-service:9090"},
 		},
 		{
-			name:        "health",
-			protocol:    router.ProtocolHTTP,
-			pathExact:   "/healthz",
-			priority:    -10,
-			upstreamURL: "http://health-service:8080",
+			name:         "health",
+			protocol:     router.ProtocolHTTP,
+			pathExact:    "/healthz",
+			priority:     -10,
+			upstreamURLs: []string{"http://health-service:8080"},
 		},
 		{
 			name:       "maintenance",
@@ -203,19 +216,31 @@ func TestRoutesFromConfig(t *testing.T) {
 		if got[i].Priority != want[i].priority {
 			t.Errorf("route[%d].Priority = %d, want %d", i, got[i].Priority, want[i].priority)
 		}
-		if want[i].upstreamURL == "" {
-			if got[i].UpstreamURL != nil {
-				t.Errorf("route[%d].UpstreamURL = %q, want nil", i, got[i].UpstreamURL)
+		if len(want[i].upstreamURLs) == 0 {
+			if got[i].Upstream != nil {
+				t.Errorf("route[%d].Upstream = %+v, want nil", i, got[i].Upstream)
 			}
+		} else if got[i].Upstream == nil {
+			t.Errorf("route[%d].Upstream = nil, want endpoints %v", i, want[i].upstreamURLs)
 		} else {
-			if got[i].UpstreamURL == nil {
-				t.Errorf("route[%d].UpstreamURL = nil, want %q", i, want[i].upstreamURL)
-			} else if got[i].UpstreamURL.String() != want[i].upstreamURL {
+			if got[i].Upstream.LoadBalancing != router.LoadBalancingPolicyRoundRobin {
 				t.Errorf(
-					"route[%d].UpstreamURL = %q, want %q",
+					"route[%d].Upstream.LoadBalancing = %q, want %q",
 					i,
-					got[i].UpstreamURL,
-					want[i].upstreamURL,
+					got[i].Upstream.LoadBalancing,
+					router.LoadBalancingPolicyRoundRobin,
+				)
+			}
+			gotURLs := make([]string, len(got[i].Upstream.Endpoints))
+			for endpointIndex := range got[i].Upstream.Endpoints {
+				gotURLs[endpointIndex] = got[i].Upstream.Endpoints[endpointIndex].String()
+			}
+			if !slices.Equal(gotURLs, want[i].upstreamURLs) {
+				t.Errorf(
+					"route[%d].Upstream.Endpoints = %v, want %v",
+					i,
+					gotURLs,
+					want[i].upstreamURLs,
 				)
 			}
 		}
@@ -484,5 +509,170 @@ func TestRoutesFromConfigReturnsNilAfterParseError(t *testing.T) {
 	var urlErr *url.Error
 	if !errors.As(err, &urlErr) {
 		t.Errorf("routesFromConfig() error = %v, want *url.Error", err)
+	}
+}
+
+func TestUpstreamFromConfig(t *testing.T) {
+	t.Parallel()
+
+	staticUpstream := func(
+		policy config.LoadBalancingPolicy,
+		endpoints ...string,
+	) *config.UpstreamConfig {
+		endpointConfigs := make([]config.UpstreamEndpointConfig, 0, len(endpoints))
+		for _, endpoint := range endpoints {
+			endpointConfigs = append(endpointConfigs, config.UpstreamEndpointConfig{URL: endpoint})
+		}
+		return &config.UpstreamConfig{
+			LoadBalancing: policy,
+			Discovery: &config.UpstreamDiscoveryConfig{
+				Static: &config.StaticUpstreamDiscoveryConfig{
+					Endpoints: endpointConfigs,
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name          string
+		route         config.RouteConfig
+		wantNil       bool
+		wantEndpoints []string
+		wantMessage   string
+	}{
+		{
+			name:    "no upstream",
+			route:   config.RouteConfig{Name: "health"},
+			wantNil: true,
+		},
+		{
+			name: "legacy upstream URL",
+			route: config.RouteConfig{
+				Name:        "users",
+				UpstreamURL: "http://users-service:8080",
+			},
+			wantEndpoints: []string{"http://users-service:8080"},
+		},
+		{
+			name: "whitespace legacy URL is not treated as absent",
+			route: config.RouteConfig{
+				Name:        "users",
+				UpstreamURL: "   ",
+			},
+			wantEndpoints: []string{"%20%20%20"},
+		},
+		{
+			name: "legacy and new upstream conflict",
+			route: config.RouteConfig{
+				Name:        "users",
+				UpstreamURL: "http://legacy:8080",
+				Upstream:    staticUpstream("", "http://server-1:8080"),
+			},
+			wantMessage: "both upstream and upstream URL",
+		},
+		{
+			name: "new upstream uses default policy",
+			route: config.RouteConfig{
+				Name:     "users",
+				Upstream: staticUpstream("", "http://server-1:8080", "https://server-2:8443"),
+			},
+			wantEndpoints: []string{"http://server-1:8080", "https://server-2:8443"},
+		},
+		{
+			name: "new upstream uses explicit round robin policy",
+			route: config.RouteConfig{
+				Name: "users",
+				Upstream: staticUpstream(
+					config.LoadBalancingPolicyRoundRobin,
+					"http://server-1:8080",
+				),
+			},
+			wantEndpoints: []string{"http://server-1:8080"},
+		},
+		{
+			name: "unsupported policy",
+			route: config.RouteConfig{
+				Name:     "users",
+				Upstream: staticUpstream("least_connections", "http://server-1:8080"),
+			},
+			wantMessage: `invalid load balancing policy "least_connections" for route "users"`,
+		},
+		{
+			name: "missing discovery",
+			route: config.RouteConfig{
+				Name:     "users",
+				Upstream: &config.UpstreamConfig{},
+			},
+			wantMessage: `no discovery configuration for upstream of route "users"`,
+		},
+		{
+			name: "missing static discovery",
+			route: config.RouteConfig{
+				Name: "users",
+				Upstream: &config.UpstreamConfig{
+					Discovery: &config.UpstreamDiscoveryConfig{},
+				},
+			},
+			wantMessage: `no static discovery configuration for upstream of route "users"`,
+		},
+		{
+			name: "invalid second endpoint",
+			route: config.RouteConfig{
+				Name:     "users",
+				Upstream: staticUpstream("", "http://server-1:8080", "://broken"),
+			},
+			wantMessage: `parse upstream endpoint [1] for route "users"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := upstreamFromConfig(tt.route)
+			if tt.wantMessage != "" {
+				if err == nil {
+					t.Fatalf("upstreamFromConfig() error = nil, want context %q", tt.wantMessage)
+				}
+				if got != nil {
+					t.Errorf("upstreamFromConfig() upstream = %#v, want nil", got)
+				}
+				if !strings.Contains(err.Error(), tt.wantMessage) {
+					t.Errorf("upstreamFromConfig() error = %q, want context %q", err, tt.wantMessage)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("upstreamFromConfig() error = %v, want nil", err)
+			}
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("upstreamFromConfig() upstream = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("upstreamFromConfig() upstream = nil, want non-nil upstream")
+			}
+			if got.LoadBalancing != router.LoadBalancingPolicyRoundRobin {
+				t.Errorf(
+					"upstreamFromConfig() policy = %q, want %q",
+					got.LoadBalancing,
+					router.LoadBalancingPolicyRoundRobin,
+				)
+			}
+			gotEndpoints := make([]string, len(got.Endpoints))
+			for i := range got.Endpoints {
+				gotEndpoints[i] = got.Endpoints[i].String()
+			}
+			if !slices.Equal(gotEndpoints, tt.wantEndpoints) {
+				t.Errorf(
+					"upstreamFromConfig() endpoints = %v, want %v",
+					gotEndpoints,
+					tt.wantEndpoints,
+				)
+			}
+		})
 	}
 }

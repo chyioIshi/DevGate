@@ -35,7 +35,13 @@ routes:
         exact: production
       - name: X-API-Version
         exact: v2
-    upstream_url: http://users-service:8080
+    upstream:
+      load_balancing: round_robin
+      discovery:
+        static:
+          endpoints:
+            - url: http://users-1:8080
+            - url: http://users-2:8080
     strip_path_prefix: true
     request_timeout: 2.5s
     max_request_body_bytes: 10485760
@@ -94,7 +100,17 @@ routes:
 				{Name: "X-Environment", Exact: "production"},
 				{Name: "X-API-Version", Exact: "v2"},
 			},
-			UpstreamURL:         "http://users-service:8080",
+			Upstream: &UpstreamConfig{
+				LoadBalancing: LoadBalancingPolicyRoundRobin,
+				Discovery: &UpstreamDiscoveryConfig{
+					Static: &StaticUpstreamDiscoveryConfig{
+						Endpoints: []UpstreamEndpointConfig{
+							{URL: "http://users-1:8080"},
+							{URL: "http://users-2:8080"},
+						},
+					},
+				},
+			},
 			StripPathPrefix:     true,
 			RequestTimeout:      2500 * time.Millisecond,
 			MaxRequestBodyBytes: 10 * 1024 * 1024,
@@ -179,6 +195,79 @@ routes:
 			got.ErrorResponses,
 			wantErrorResponses,
 		)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownUpstreamFields(t *testing.T) {
+	tests := []struct {
+		name         string
+		upstreamYAML string
+		unknownField string
+	}{
+		{
+			name: "upstream",
+			upstreamYAML: `
+      load_balancing: round_robin
+      unknown_upstream: value`,
+			unknownField: "unknown_upstream",
+		},
+		{
+			name: "discovery",
+			upstreamYAML: `
+      load_balancing: round_robin
+      discovery:
+        unknown_discovery: {}`,
+			unknownField: "unknown_discovery",
+		},
+		{
+			name: "static discovery",
+			upstreamYAML: `
+      load_balancing: round_robin
+      discovery:
+        static:
+          unknown_static: value`,
+			unknownField: "unknown_static",
+		},
+		{
+			name: "endpoint",
+			upstreamYAML: `
+      load_balancing: round_robin
+      discovery:
+        static:
+          endpoints:
+            - url: http://users:8080
+              unknown_endpoint: value`,
+			unknownField: "unknown_endpoint",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream:` + test.upstreamYAML
+
+			got, err := decodeConfig(strings.NewReader(input))
+			if err == nil {
+				t.Fatal("decodeConfig() error = nil, want unknown field error")
+			}
+			if got.Routes != nil {
+				t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+			}
+			if !strings.Contains(err.Error(), "decode YAML config") {
+				t.Errorf("decodeConfig() error = %q, want decoding context", err)
+			}
+			if !strings.Contains(err.Error(), `unknown field "`+test.unknownField+`"`) {
+				t.Errorf(
+					"decodeConfig() error = %q, want unknown field %q",
+					err,
+					test.unknownField,
+				)
+			}
+		})
 	}
 }
 

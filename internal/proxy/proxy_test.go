@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/chyioishi/devgate/internal/requestid"
+	"github.com/chyioishi/devgate/internal/upstream"
 )
 
 type receivedRequest struct {
@@ -30,6 +31,73 @@ type receivedRequest struct {
 	XForwardedHost  string
 	XForwardedProto string
 	RequestID       string
+}
+
+type staticTestTargetPicker struct {
+	target url.URL
+}
+
+func (p staticTestTargetPicker) Next() url.URL {
+	return p.target
+}
+
+func testTargetPicker(targetURL *url.URL) TargetPicker {
+	return staticTestTargetPicker{target: *targetURL}
+}
+
+func TestReverseProxySelectsTargetForEachRequest(t *testing.T) {
+	t.Parallel()
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "A")
+	}))
+	t.Cleanup(serverA.Close)
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "B")
+	}))
+	t.Cleanup(serverB.Close)
+
+	serverAURL, err := url.Parse(serverA.URL)
+	if err != nil {
+		t.Fatalf("parse server A URL: %v", err)
+	}
+	serverBURL, err := url.Parse(serverB.URL)
+	if err != nil {
+		t.Fatalf("parse server B URL: %v", err)
+	}
+	picker, err := upstream.NewRoundRobin([]url.URL{*serverAURL, *serverBURL})
+	if err != nil {
+		t.Fatalf("create round-robin picker: %v", err)
+	}
+
+	gateway := httptest.NewServer(New(
+		picker,
+		http.DefaultTransport,
+		nil,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.DiscardHandler),
+	))
+	t.Cleanup(gateway.Close)
+
+	for i, want := range []string{"A", "B", "A"} {
+		response, err := gateway.Client().Get(gateway.URL)
+		if err != nil {
+			t.Fatalf("request %d: %v", i, err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read response %d body: %v", i, readErr)
+		}
+		if closeErr != nil {
+			t.Fatalf("close response %d body: %v", i, closeErr)
+		}
+		if got := string(body); got != want {
+			t.Errorf("response %d body = %q, want %q", i, got, want)
+		}
+	}
 }
 
 func TestReverseProxyForwardsRequest(t *testing.T) {
@@ -79,7 +147,7 @@ func TestReverseProxyForwardsRequest(t *testing.T) {
 		header.Set(requestid.HeaderName, transformRequestID)
 	}
 	gateway := httptest.NewServer(requestid.Middleware(
-		New(targetURL, http.DefaultTransport, nil, responseHeaderTransform, nil, nil, logger),
+		New(testTargetPicker(targetURL), http.DefaultTransport, nil, responseHeaderTransform, nil, nil, logger),
 		nil,
 		logger,
 	))
@@ -232,7 +300,7 @@ func TestReverseProxyStreamsResponseBody(t *testing.T) {
 		t.Fatalf("parse upstream URL: %v", err)
 	}
 	gateway := httptest.NewServer(New(
-		targetURL,
+		testTargetPicker(targetURL),
 		http.DefaultTransport,
 		nil,
 		nil,
@@ -329,7 +397,7 @@ func TestReverseProxyForwardsResponseTrailers(t *testing.T) {
 		t.Fatalf("parse upstream URL: %v", err)
 	}
 	gateway := httptest.NewServer(New(
-		targetURL,
+		testTargetPicker(targetURL),
 		http.DefaultTransport,
 		nil,
 		nil,
@@ -393,7 +461,7 @@ func TestReverseProxyStreamsRequestBody(t *testing.T) {
 		t.Fatalf("parse upstream URL: %v", err)
 	}
 	gateway := httptest.NewServer(New(
-		targetURL,
+		testTargetPicker(targetURL),
 		http.DefaultTransport,
 		nil,
 		nil,
@@ -524,7 +592,7 @@ func TestReverseProxyForwardsRequestTrailers(t *testing.T) {
 		t.Fatalf("parse upstream URL: %v", err)
 	}
 	gateway := httptest.NewServer(New(
-		targetURL,
+		testTargetPicker(targetURL),
 		http.DefaultTransport,
 		nil,
 		nil,
@@ -581,7 +649,7 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 		header.Set("X-Forwarded-Proto", "transform-controlled")
 	}
 	reverseProxy := New(
-		targetURL,
+		testTargetPicker(targetURL),
 		http.DefaultTransport,
 		transform,
 		nil,
@@ -626,7 +694,7 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 func TestReverseProxyClonesTrustedProxyCIDRs(t *testing.T) {
 	trustedCIDRs := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/24")}
 	reverseProxy := New(
-		&url.URL{Scheme: "http", Host: "upstream.local"},
+		testTargetPicker(&url.URL{Scheme: "http", Host: "upstream.local"}),
 		http.DefaultTransport,
 		nil,
 		nil,
@@ -684,7 +752,7 @@ func TestReverseProxyReturnsBadGatewayWhenUpstreamIsUnavailable(t *testing.T) {
 	}
 	recorder := httptest.NewRecorder()
 
-	proxy := New(targetURL, http.DefaultTransport, nil, nil, nil, nil, logger)
+	proxy := New(testTargetPicker(targetURL), http.DefaultTransport, nil, nil, nil, nil, logger)
 	handler := requestid.Middleware(proxy, nil, logger)
 	handler.ServeHTTP(recorder, req)
 
@@ -749,7 +817,7 @@ func TestReverseProxyDelegatesGatewayErrorToResponder(t *testing.T) {
 		_, _ = io.WriteString(w, "custom gateway error")
 	}
 	reverseProxy := New(
-		targetURL,
+		testTargetPicker(targetURL),
 		http.DefaultTransport,
 		nil,
 		nil,
@@ -859,7 +927,7 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 	}
 	targetURL := &url.URL{Scheme: "http", Host: "upstream.local"}
 	reverseProxy := New(
-		targetURL,
+		testTargetPicker(targetURL),
 		circuitBreaker,
 		nil,
 		nil,
@@ -928,7 +996,7 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	}
 	defer transport.CloseIdleConnections()
 
-	proxy := New(targetURL, transport, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
+	proxy := New(testTargetPicker(targetURL), transport, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
 	recorder := httptest.NewRecorder()
 
@@ -982,7 +1050,7 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 	}
 
 	proxy := New(
-		targetURL,
+		testTargetPicker(targetURL),
 		retryTransport,
 		nil,
 		nil,

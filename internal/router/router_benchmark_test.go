@@ -133,10 +133,10 @@ func benchmarkRoutes(routesCount int) []Route {
 	upstreamURL := &url.URL{Scheme: "http", Host: "api.example.com"}
 	for i := 0; i < routesCount; i++ {
 		routes = append(routes, Route{
-			Name:        fmt.Sprintf("route-%d", i),
-			Protocol:    ProtocolHTTP,
-			PathExact:   fmt.Sprintf("/routes/%d", i),
-			UpstreamURL: upstreamURL,
+			Name:      fmt.Sprintf("route-%d", i),
+			Protocol:  ProtocolHTTP,
+			PathExact: fmt.Sprintf("/routes/%d", i),
+			Upstream:  testUpstreamURL(upstreamURL),
 		})
 	}
 	return routes

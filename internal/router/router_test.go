@@ -22,12 +22,12 @@ func TestNew(t *testing.T) {
 			name: "valid HTTP route",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET", "POST", "PURGE"},
-					Hosts:       []string{"api.example.com", "api-v1.example.com", "localhost", "127.0.0.1"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET", "POST", "PURGE"},
+					Hosts:      []string{"api.example.com", "api-v1.example.com", "localhost", "127.0.0.1"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 		},
@@ -35,10 +35,10 @@ func TestNew(t *testing.T) {
 			name: "valid exact path with trailing slash",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users/",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:      "users",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users/",
+					Upstream:  testUpstream(t, "http://users-service:8080"),
 				},
 			},
 		},
@@ -46,22 +46,22 @@ func TestNew(t *testing.T) {
 			name: "valid HTTP gRPC and root routes",
 			routes: []Route{
 				{
-					Name:        "fallback",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/",
-					UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+					Name:       "fallback",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/",
+					Upstream:   testUpstream(t, "http://fallback-service:8080"),
 				},
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "https://users-service:8443"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "https://users-service:8443"),
 				},
 				{
-					Name:        "greeter",
-					Protocol:    ProtocolGRPC,
-					PathPrefix:  "/greeter.v1.Greeter",
-					UpstreamURL: mustParseURL(t, "http://greeter-service:9090"),
+					Name:       "greeter",
+					Protocol:   ProtocolGRPC,
+					PathPrefix: "/greeter.v1.Greeter",
+					Upstream:   testUpstream(t, "http://greeter-service:9090"),
 				},
 			},
 		},
@@ -73,9 +73,9 @@ func TestNew(t *testing.T) {
 			name: "empty route name",
 			routes: []Route{
 				{
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "route name must not be empty",
@@ -84,10 +84,10 @@ func TestNew(t *testing.T) {
 			name: "whitespace route name",
 			routes: []Route{
 				{
-					Name:        "   ",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "   ",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "route name must not be empty",
@@ -96,10 +96,10 @@ func TestNew(t *testing.T) {
 			name: "unsupported protocol",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    Protocol("smtp"),
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   Protocol("smtp"),
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: `unsupported protocol "smtp"`,
@@ -108,10 +108,10 @@ func TestNew(t *testing.T) {
 			name: "path prefix without leading slash",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "users",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "must start with '/'",
@@ -120,9 +120,9 @@ func TestNew(t *testing.T) {
 			name: "missing path matcher",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:     "users",
+					Protocol: ProtocolHTTP,
+					Upstream: testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "either path prefix or exact path must be configured",
@@ -131,11 +131,11 @@ func TestNew(t *testing.T) {
 			name: "prefix and exact path together",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					PathExact:   "/users/42",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					PathExact:  "/users/42",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "path prefix and exact path are mutually exclusive",
@@ -144,10 +144,10 @@ func TestNew(t *testing.T) {
 			name: "whitespace path prefix is configured but invalid",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "   ",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "   ",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "path prefix",
@@ -156,10 +156,10 @@ func TestNew(t *testing.T) {
 			name: "exact path without leading slash",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:      "users",
+					Protocol:  ProtocolHTTP,
+					PathExact: "users",
+					Upstream:  testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "exact path",
@@ -168,10 +168,10 @@ func TestNew(t *testing.T) {
 			name: "whitespace exact path is configured but invalid",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "   ",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:      "users",
+					Protocol:  ProtocolHTTP,
+					PathExact: "   ",
+					Upstream:  testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "exact path",
@@ -184,7 +184,7 @@ func TestNew(t *testing.T) {
 					Protocol:        ProtocolHTTP,
 					PathExact:       "/users",
 					StripPathPrefix: true,
-					UpstreamURL:     mustParseURL(t, "http://users-service:8080"),
+					Upstream:        testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "strip path prefix requires a path prefix matcher",
@@ -193,10 +193,10 @@ func TestNew(t *testing.T) {
 			name: "path prefix with trailing slash",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users/",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users/",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "must not end with '/'",
@@ -205,11 +205,11 @@ func TestNew(t *testing.T) {
 			name: "empty HTTP method",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{""},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{""},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "HTTP method must not be empty",
@@ -218,11 +218,11 @@ func TestNew(t *testing.T) {
 			name: "lowercase HTTP method",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"get"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"get"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: `HTTP method must be uppercase: "get"`,
@@ -231,11 +231,11 @@ func TestNew(t *testing.T) {
 			name: "invalid HTTP method token",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET /"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET /"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: `invalid HTTP method: "GET /"`,
@@ -244,11 +244,11 @@ func TestNew(t *testing.T) {
 			name: "duplicate HTTP method",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET", "GET"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET", "GET"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: `duplicate HTTP method: "GET"`,
@@ -257,11 +257,11 @@ func TestNew(t *testing.T) {
 			name: "empty host",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{""},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{""},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host cannot be empty",
@@ -270,11 +270,11 @@ func TestNew(t *testing.T) {
 			name: "uppercase host",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"API.example.com"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"API.example.com"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host must be lowercase",
@@ -283,11 +283,11 @@ func TestNew(t *testing.T) {
 			name: "host with port",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"api.example.com:8443"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"api.example.com:8443"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "invalid host",
@@ -296,11 +296,11 @@ func TestNew(t *testing.T) {
 			name: "host with trailing dot",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"api.example.com."},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"api.example.com."},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host cannot have a trailing dot",
@@ -309,11 +309,11 @@ func TestNew(t *testing.T) {
 			name: "host with leading dot",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{".example.com"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{".example.com"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host label cannot be empty",
@@ -322,11 +322,11 @@ func TestNew(t *testing.T) {
 			name: "host with empty label",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"api..example.com"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"api..example.com"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host label cannot be empty",
@@ -335,11 +335,11 @@ func TestNew(t *testing.T) {
 			name: "host label starts with hyphen",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"api.-internal.example"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"api.-internal.example"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host label cannot start or end with a hyphen",
@@ -348,11 +348,11 @@ func TestNew(t *testing.T) {
 			name: "host label ends with hyphen",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"api-.internal.example"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"api-.internal.example"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host label cannot start or end with a hyphen",
@@ -361,11 +361,11 @@ func TestNew(t *testing.T) {
 			name: "host label exceeds maximum length",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{strings.Repeat("a", 64) + ".example"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{strings.Repeat("a", 64) + ".example"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host label cannot exceed 63 characters",
@@ -383,7 +383,7 @@ func TestNew(t *testing.T) {
 							strings.Repeat("c", 63) + "." +
 							strings.Repeat("d", 63),
 					},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Upstream: testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host cannot exceed 253 characters",
@@ -392,11 +392,11 @@ func TestNew(t *testing.T) {
 			name: "host contains invalid character",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"api_internal.example"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"api_internal.example"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: "host label contains invalid character",
@@ -405,11 +405,11 @@ func TestNew(t *testing.T) {
 			name: "duplicate host",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Hosts:       []string{"api.example.com", "api.example.com"},
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Hosts:      []string{"api.example.com", "api.example.com"},
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 			},
 			wantMessage: `duplicate host: "api.example.com"`,
@@ -426,43 +426,46 @@ func TestNew(t *testing.T) {
 			wantMessage: "no action configured for the route",
 		},
 		{
-			name: "unsupported upstream URL scheme",
+			name: "unsupported upstream endpoint scheme",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "ftp://users-service:21"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "ftp://users-service:21"),
 				},
 			},
-			wantMessage: `upstream URL scheme "ftp"`,
+			wantMessage: "upstream endpoint [0]",
 		},
 		{
-			name: "empty upstream URL host",
+			name: "empty upstream endpoint host",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: &url.URL{Scheme: "http"},
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream: &Upstream{
+						LoadBalancing: LoadBalancingPolicyRoundRobin,
+						Endpoints:     []url.URL{{Scheme: "http"}},
+					},
 				},
 			},
-			wantMessage: "upstream URL host must not be empty",
+			wantMessage: "upstream endpoint [0]",
 		},
 		{
 			name: "duplicate route name",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 				},
 				{
-					Name:        "users",
-					Protocol:    ProtocolGRPC,
-					PathPrefix:  "/greeter.v1.Greeter",
-					UpstreamURL: mustParseURL(t, "http://greeter-service:9090"),
+					Name:       "users",
+					Protocol:   ProtocolGRPC,
+					PathPrefix: "/greeter.v1.Greeter",
+					Upstream:   testUpstream(t, "http://greeter-service:9090"),
 				},
 			},
 			wantMessage: "duplicate route name",
@@ -471,18 +474,18 @@ func TestNew(t *testing.T) {
 			name: "same path prefix with disjoint methods",
 			routes: []Route{
 				{
-					Name:        "get-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					UpstreamURL: mustParseURL(t, "http://users-read-service:8080"),
+					Name:       "get-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Upstream:   testUpstream(t, "http://users-read-service:8080"),
 				},
 				{
-					Name:        "create-user",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"POST"},
-					UpstreamURL: mustParseURL(t, "http://users-write-service:8080"),
+					Name:       "create-user",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"POST"},
+					Upstream:   testUpstream(t, "http://users-write-service:8080"),
 				},
 			},
 		},
@@ -490,20 +493,20 @@ func TestNew(t *testing.T) {
 			name: "same path and method with disjoint hosts",
 			routes: []Route{
 				{
-					Name:        "public-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					Hosts:       []string{"api.example.com"},
-					UpstreamURL: mustParseURL(t, "http://public-users-service:8080"),
+					Name:       "public-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Hosts:      []string{"api.example.com"},
+					Upstream:   testUpstream(t, "http://public-users-service:8080"),
 				},
 				{
-					Name:        "internal-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					Hosts:       []string{"api.internal"},
-					UpstreamURL: mustParseURL(t, "http://internal-users-service:8080"),
+					Name:       "internal-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Hosts:      []string{"api.internal"},
+					Upstream:   testUpstream(t, "http://internal-users-service:8080"),
 				},
 			},
 		},
@@ -511,20 +514,20 @@ func TestNew(t *testing.T) {
 			name: "same path with overlapping methods and hosts",
 			routes: []Route{
 				{
-					Name:        "users-v1",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET", "POST"},
-					Hosts:       []string{"api.example.com", "api.internal"},
-					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+					Name:       "users-v1",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET", "POST"},
+					Hosts:      []string{"api.example.com", "api.internal"},
+					Upstream:   testUpstream(t, "http://users-v1-service:8080"),
 				},
 				{
-					Name:        "users-v2",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					Hosts:       []string{"api.internal"},
-					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+					Name:       "users-v2",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Hosts:      []string{"api.internal"},
+					Upstream:   testUpstream(t, "http://users-v2-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers for path",
@@ -533,19 +536,19 @@ func TestNew(t *testing.T) {
 			name: "wildcard hosts conflict with constrained hosts for overlapping method",
 			routes: []Route{
 				{
-					Name:        "all-hosts",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					UpstreamURL: mustParseURL(t, "http://all-hosts-service:8080"),
+					Name:       "all-hosts",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Upstream:   testUpstream(t, "http://all-hosts-service:8080"),
 				},
 				{
-					Name:        "public-host",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					Hosts:       []string{"api.example.com"},
-					UpstreamURL: mustParseURL(t, "http://public-host-service:8080"),
+					Name:       "public-host",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Hosts:      []string{"api.example.com"},
+					Upstream:   testUpstream(t, "http://public-host-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers for path",
@@ -554,18 +557,18 @@ func TestNew(t *testing.T) {
 			name: "same path prefix with overlapping methods",
 			routes: []Route{
 				{
-					Name:        "read-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET", "HEAD"},
-					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+					Name:       "read-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET", "HEAD"},
+					Upstream:   testUpstream(t, "http://users-v1-service:8080"),
 				},
 				{
-					Name:        "other-read-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+					Name:       "other-read-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Upstream:   testUpstream(t, "http://users-v2-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers for path",
@@ -574,25 +577,25 @@ func TestNew(t *testing.T) {
 			name: "method conflicts with non-adjacent route at same path prefix",
 			routes: []Route{
 				{
-					Name:        "first-get-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+					Name:       "first-get-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Upstream:   testUpstream(t, "http://users-v1-service:8080"),
 				},
 				{
-					Name:        "post-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"POST"},
-					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+					Name:       "post-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"POST"},
+					Upstream:   testUpstream(t, "http://users-v2-service:8080"),
 				},
 				{
-					Name:        "second-get-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					UpstreamURL: mustParseURL(t, "http://users-v3-service:8080"),
+					Name:       "second-get-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Upstream:   testUpstream(t, "http://users-v3-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers for path",
@@ -601,17 +604,17 @@ func TestNew(t *testing.T) {
 			name: "wildcard methods conflict with constrained methods",
 			routes: []Route{
 				{
-					Name:        "all-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://all-users-service:8080"),
+					Name:       "all-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://all-users-service:8080"),
 				},
 				{
-					Name:        "get-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					UpstreamURL: mustParseURL(t, "http://get-users-service:8080"),
+					Name:       "get-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Upstream:   testUpstream(t, "http://get-users-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers for path",
@@ -620,17 +623,17 @@ func TestNew(t *testing.T) {
 			name: "constrained methods conflict with wildcard methods",
 			routes: []Route{
 				{
-					Name:        "get-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{"GET"},
-					UpstreamURL: mustParseURL(t, "http://get-users-service:8080"),
+					Name:       "get-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{"GET"},
+					Upstream:   testUpstream(t, "http://get-users-service:8080"),
 				},
 				{
-					Name:        "all-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://all-users-service:8080"),
+					Name:       "all-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://all-users-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers for path",
@@ -645,7 +648,7 @@ func TestNew(t *testing.T) {
 					Methods:       []string{http.MethodGet},
 					Hosts:         []string{"api.example.com"},
 					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
-					UpstreamURL:   mustParseURL(t, "http://production-users-service:8080"),
+					Upstream:      testUpstream(t, "http://production-users-service:8080"),
 				},
 				{
 					Name:          "staging-users",
@@ -654,7 +657,7 @@ func TestNew(t *testing.T) {
 					Methods:       []string{http.MethodGet},
 					Hosts:         []string{"api.example.com"},
 					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "staging"}},
-					UpstreamURL:   mustParseURL(t, "http://staging-users-service:8080"),
+					Upstream:      testUpstream(t, "http://staging-users-service:8080"),
 				},
 			},
 		},
@@ -667,7 +670,7 @@ func TestNew(t *testing.T) {
 					PathPrefix:    "/users",
 					Methods:       []string{http.MethodGet},
 					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
-					UpstreamURL:   mustParseURL(t, "http://users-v1-service:8080"),
+					Upstream:      testUpstream(t, "http://users-v1-service:8080"),
 				},
 				{
 					Name:          "users-v2",
@@ -675,7 +678,7 @@ func TestNew(t *testing.T) {
 					PathPrefix:    "/users",
 					Methods:       []string{http.MethodGet},
 					HeaderMatches: []HeaderMatch{{Name: "x-environment", Exact: "production"}},
-					UpstreamURL:   mustParseURL(t, "http://users-v2-service:8080"),
+					Upstream:      testUpstream(t, "http://users-v2-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers",
@@ -684,11 +687,11 @@ func TestNew(t *testing.T) {
 			name: "wildcard headers conflict with constrained headers",
 			routes: []Route{
 				{
-					Name:        "all-environments",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Methods:     []string{http.MethodGet},
-					UpstreamURL: mustParseURL(t, "http://all-users-service:8080"),
+					Name:       "all-environments",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Methods:    []string{http.MethodGet},
+					Upstream:   testUpstream(t, "http://all-users-service:8080"),
 				},
 				{
 					Name:          "production-users",
@@ -696,7 +699,7 @@ func TestNew(t *testing.T) {
 					PathPrefix:    "/users",
 					Methods:       []string{http.MethodGet},
 					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
-					UpstreamURL:   mustParseURL(t, "http://production-users-service:8080"),
+					Upstream:      testUpstream(t, "http://production-users-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers",
@@ -710,7 +713,7 @@ func TestNew(t *testing.T) {
 					PathPrefix:    "/users",
 					Methods:       []string{http.MethodGet},
 					HeaderMatches: []HeaderMatch{{Name: "X-Environment", Exact: "production"}},
-					UpstreamURL:   mustParseURL(t, "http://production-users-service:8080"),
+					Upstream:      testUpstream(t, "http://production-users-service:8080"),
 				},
 				{
 					Name:          "v2-users",
@@ -718,7 +721,7 @@ func TestNew(t *testing.T) {
 					PathPrefix:    "/users",
 					Methods:       []string{http.MethodGet},
 					HeaderMatches: []HeaderMatch{{Name: "X-API-Version", Exact: "v2"}},
-					UpstreamURL:   mustParseURL(t, "http://v2-users-service:8080"),
+					Upstream:      testUpstream(t, "http://v2-users-service:8080"),
 				},
 			},
 			wantMessage: "conflicting matchers",
@@ -735,7 +738,7 @@ func TestNew(t *testing.T) {
 						{Name: "X-Environment", Exact: "production"},
 						{Name: "X-API-Version", Exact: "v1"},
 					},
-					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+					Upstream: testUpstream(t, "http://users-v1-service:8080"),
 				},
 				{
 					Name:       "users-v2",
@@ -746,7 +749,7 @@ func TestNew(t *testing.T) {
 						{Name: "X-Environment", Exact: "production"},
 						{Name: "X-API-Version", Exact: "v2"},
 					},
-					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+					Upstream: testUpstream(t, "http://users-v2-service:8080"),
 				},
 			},
 		},
@@ -836,7 +839,7 @@ func TestNewValidatesDirectResponseAction(t *testing.T) {
 				Name:           "maintenance",
 				Protocol:       ProtocolHTTP,
 				PathPrefix:     "/api",
-				UpstreamURL:    mustParseURL(t, "http://api-service:8080"),
+				Upstream:       testUpstream(t, "http://api-service:8080"),
 				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
 			},
 			wantMessage: "multiple actions configured for the route",
@@ -1171,10 +1174,10 @@ func TestNewValidatesRedirectPolicies(t *testing.T) {
 func TestNewAllowsProxyResponseLocationTransform(t *testing.T) {
 	got, err := New([]Route{
 		{
-			Name:        "users",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testUpstream(t, "http://users-service:8080"),
 			ResponseHeaders: &HeaderTransformPolicy{
 				Set: map[string]string{"Location": "https://api.example.com/users"},
 			},
@@ -1198,10 +1201,10 @@ func TestNewAcceptsSupportedCustomErrorResponses(t *testing.T) {
 	} {
 		t.Run(http.StatusText(statusCode), func(t *testing.T) {
 			route := Route{
-				Name:        "users",
-				Protocol:    ProtocolHTTP,
-				PathPrefix:  "/api/users",
-				UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				Name:       "users",
+				Protocol:   ProtocolHTTP,
+				PathPrefix: "/api/users",
+				Upstream:   testUpstream(t, "http://users-service:8080"),
 				ErrorResponses: map[int]ErrorResponse{
 					statusCode: {},
 				},
@@ -1236,10 +1239,10 @@ func TestNewRejectsInapplicableCustomErrorResponse(t *testing.T) {
 		{
 			name: "413 without request body limit",
 			route: Route{
-				Name:        "users",
-				Protocol:    ProtocolHTTP,
-				PathPrefix:  "/api/users",
-				UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				Name:       "users",
+				Protocol:   ProtocolHTTP,
+				PathPrefix: "/api/users",
+				Upstream:   testUpstream(t, "http://users-service:8080"),
 				ErrorResponses: map[int]ErrorResponse{
 					http.StatusRequestEntityTooLarge: {},
 				},
@@ -1249,10 +1252,10 @@ func TestNewRejectsInapplicableCustomErrorResponse(t *testing.T) {
 		{
 			name: "429 without rate limit",
 			route: Route{
-				Name:        "users",
-				Protocol:    ProtocolHTTP,
-				PathPrefix:  "/api/users",
-				UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+				Name:       "users",
+				Protocol:   ProtocolHTTP,
+				PathPrefix: "/api/users",
+				Upstream:   testUpstream(t, "http://users-service:8080"),
 				ErrorResponses: map[int]ErrorResponse{
 					http.StatusTooManyRequests: {},
 				},
@@ -1372,10 +1375,10 @@ func TestNewValidatesCustomErrorResponse(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := New([]Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/api/users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/api/users",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
 					ErrorResponses: map[int]ErrorResponse{
 						test.statusCode: test.errorResponse,
 					},
@@ -1448,7 +1451,7 @@ func TestNewRejectsMultipleRouteActions(t *testing.T) {
 					Name:           "conflicting-actions",
 					Protocol:       ProtocolHTTP,
 					PathPrefix:     "/api",
-					UpstreamURL:    test.upstreamURL,
+					Upstream:       testUpstreamURL(test.upstreamURL),
 					DirectResponse: test.directResponse,
 					Redirect:       test.redirect,
 				},
@@ -1523,16 +1526,16 @@ func TestNewValidatesExactPathConflicts(t *testing.T) {
 			name: "different exact paths are allowed",
 			routes: []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
+					Name:      "users",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users",
+					Upstream:  testUpstream(t, "http://users-service:8080"),
 				},
 				{
-					Name:        "orders",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/orders",
-					UpstreamURL: mustParseURL(t, "http://orders-service:8080"),
+					Name:      "orders",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/orders",
+					Upstream:  testUpstream(t, "http://orders-service:8080"),
 				},
 			},
 		},
@@ -1540,16 +1543,16 @@ func TestNewValidatesExactPathConflicts(t *testing.T) {
 			name: "same exact path conflicts",
 			routes: []Route{
 				{
-					Name:        "users-v1",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users",
-					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+					Name:      "users-v1",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users",
+					Upstream:  testUpstream(t, "http://users-v1-service:8080"),
 				},
 				{
-					Name:        "users-v2",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users",
-					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+					Name:      "users-v2",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users",
+					Upstream:  testUpstream(t, "http://users-v2-service:8080"),
 				},
 			},
 			wantMessage: `conflicting matchers for path "/users"`,
@@ -1558,18 +1561,18 @@ func TestNewValidatesExactPathConflicts(t *testing.T) {
 			name: "same exact path with disjoint methods is allowed",
 			routes: []Route{
 				{
-					Name:        "get-users",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users",
-					Methods:     []string{http.MethodGet},
-					UpstreamURL: mustParseURL(t, "http://users-read-service:8080"),
+					Name:      "get-users",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users",
+					Methods:   []string{http.MethodGet},
+					Upstream:  testUpstream(t, "http://users-read-service:8080"),
 				},
 				{
-					Name:        "create-user",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users",
-					Methods:     []string{http.MethodPost},
-					UpstreamURL: mustParseURL(t, "http://users-write-service:8080"),
+					Name:      "create-user",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users",
+					Methods:   []string{http.MethodPost},
+					Upstream:  testUpstream(t, "http://users-write-service:8080"),
 				},
 			},
 		},
@@ -1577,16 +1580,16 @@ func TestNewValidatesExactPathConflicts(t *testing.T) {
 			name: "exact and prefix with same path are allowed",
 			routes: []Route{
 				{
-					Name:        "prefix-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://prefix-users-service:8080"),
+					Name:       "prefix-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://prefix-users-service:8080"),
 				},
 				{
-					Name:        "exact-users",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users",
-					UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+					Name:      "exact-users",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users",
+					Upstream:  testUpstream(t, "http://exact-users-service:8080"),
 				},
 			},
 		},
@@ -1648,18 +1651,18 @@ func TestNewValidatesRoutePriorities(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			routes := []Route{
 				{
-					Name:        "users-v1",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Priority:    test.priorities[0],
-					UpstreamURL: mustParseURL(t, "http://users-v1-service:8080"),
+					Name:       "users-v1",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Priority:   test.priorities[0],
+					Upstream:   testUpstream(t, "http://users-v1-service:8080"),
 				},
 				{
-					Name:        "users-v2",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Priority:    test.priorities[1],
-					UpstreamURL: mustParseURL(t, "http://users-v2-service:8080"),
+					Name:       "users-v2",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Priority:   test.priorities[1],
+					Upstream:   testUpstream(t, "http://users-v2-service:8080"),
 				},
 			}
 
@@ -1691,11 +1694,11 @@ func TestNewCopiesRoutes(t *testing.T) {
 	upstreamURL := mustParseURL(t, "http://users-service:8080")
 	routes := []Route{
 		{
-			Name:        "users",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/users",
-			Methods:     []string{"GET"},
-			UpstreamURL: upstreamURL,
+			Name:       "users",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/users",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstreamURL(upstreamURL),
 		},
 	}
 
@@ -1707,11 +1710,11 @@ func TestNewCopiesRoutes(t *testing.T) {
 	routes[0] = Route{}
 
 	want := Route{
-		Name:        "users",
-		Protocol:    ProtocolHTTP,
-		PathPrefix:  "/users",
-		Methods:     []string{"GET"},
-		UpstreamURL: upstreamURL,
+		Name:       "users",
+		Protocol:   ProtocolHTTP,
+		PathPrefix: "/users",
+		Methods:    []string{"GET"},
+		Upstream:   testUpstreamURL(upstreamURL),
 	}
 	if !reflect.DeepEqual(got.routes[0], want) {
 		t.Errorf("New() copied route = %+v, want %+v", got.routes[0], want)
@@ -1779,7 +1782,7 @@ func TestNewValidatesHeaderMatches(t *testing.T) {
 					Protocol:      ProtocolHTTP,
 					PathPrefix:    "/users",
 					HeaderMatches: test.headerMatches,
-					UpstreamURL:   mustParseURL(t, "http://users-service:8080"),
+					Upstream:      testUpstream(t, "http://users-service:8080"),
 				},
 			}
 
@@ -1884,11 +1887,11 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			routes := []Route{
 				{
-					Name:        "users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					UpstreamURL: mustParseURL(t, "http://users-service:8080"),
-					RateLimit:   &test.policy,
+					Name:       "users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Upstream:   testUpstream(t, "http://users-service:8080"),
+					RateLimit:  &test.policy,
 				},
 			}
 
@@ -1946,7 +1949,7 @@ func TestNewValidatesRequestTimeout(t *testing.T) {
 					Name:           "users",
 					Protocol:       ProtocolHTTP,
 					PathPrefix:     "/users",
-					UpstreamURL:    mustParseURL(t, "http://users-service:8080"),
+					Upstream:       testUpstream(t, "http://users-service:8080"),
 					RequestTimeout: test.timeout,
 				},
 			}
@@ -2004,7 +2007,7 @@ func TestNewValidatesMaxRequestBodyBytes(t *testing.T) {
 					Name:                "users",
 					Protocol:            ProtocolHTTP,
 					PathPrefix:          "/users",
-					UpstreamURL:         mustParseURL(t, "http://users-service:8080"),
+					Upstream:            testUpstream(t, "http://users-service:8080"),
 					MaxRequestBodyBytes: test.limit,
 				},
 			}
@@ -2126,7 +2129,7 @@ func TestNewValidatesRequestHeaderPolicy(t *testing.T) {
 					Name:           "users",
 					Protocol:       ProtocolHTTP,
 					PathPrefix:     "/users",
-					UpstreamURL:    mustParseURL(t, "http://users-service:8080"),
+					Upstream:       testUpstream(t, "http://users-service:8080"),
 					RequestHeaders: test.policy,
 				},
 			}
@@ -2296,7 +2299,7 @@ func TestNewValidatesResponseHeaderPolicy(t *testing.T) {
 					Name:            "users",
 					Protocol:        ProtocolHTTP,
 					PathPrefix:      "/users",
-					UpstreamURL:     mustParseURL(t, "http://users-service:8080"),
+					Upstream:        testUpstream(t, "http://users-service:8080"),
 					ResponseHeaders: test.policy,
 				},
 			}
@@ -2476,38 +2479,38 @@ func TestHeaderTransformPolicyApply(t *testing.T) {
 func TestRouterMatch(t *testing.T) {
 	routes := []Route{
 		{
-			Name:        "fallback",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/",
-			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+			Name:       "fallback",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/",
+			Upstream:   testUpstream(t, "http://fallback-service:8080"),
 		},
 		{
-			Name:        "admin-write",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api/admin",
-			Methods:     []string{"POST"},
-			UpstreamURL: mustParseURL(t, "http://admin-service:8080"),
+			Name:       "admin-write",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api/admin",
+			Methods:    []string{"POST"},
+			Upstream:   testUpstream(t, "http://admin-service:8080"),
 		},
 		{
-			Name:        "api-read",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+			Name:       "api-read",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstream(t, "http://api-read-service:8080"),
 		},
 		{
-			Name:        "api-write",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"POST"},
-			UpstreamURL: mustParseURL(t, "http://api-write-service:8080"),
+			Name:       "api-write",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"POST"},
+			Upstream:   testUpstream(t, "http://api-write-service:8080"),
 		},
 		{
-			Name:        "greeter",
-			Protocol:    ProtocolGRPC,
-			PathPrefix:  "/greeter.v1.Greeter",
-			Methods:     []string{"POST"},
-			UpstreamURL: mustParseURL(t, "http://greeter-service:9090"),
+			Name:       "greeter",
+			Protocol:   ProtocolGRPC,
+			PathPrefix: "/greeter.v1.Greeter",
+			Methods:    []string{"POST"},
+			Upstream:   testUpstream(t, "http://greeter-service:9090"),
 		},
 	}
 
@@ -2612,11 +2615,11 @@ func TestRouterMatch(t *testing.T) {
 func TestRouterMatchNotFound(t *testing.T) {
 	router, err := New([]Route{
 		{
-			Name:        "api",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			Name:       "api",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstream(t, "http://api-service:8080"),
 		},
 	})
 	if err != nil {
@@ -2671,26 +2674,26 @@ func TestRouterMatchNotFound(t *testing.T) {
 func TestRouterMatchHost(t *testing.T) {
 	routeRouter, err := New([]Route{
 		{
-			Name:        "fallback",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/",
-			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+			Name:       "fallback",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/",
+			Upstream:   testUpstream(t, "http://fallback-service:8080"),
 		},
 		{
-			Name:        "public-users",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/users",
-			Methods:     []string{"GET"},
-			Hosts:       []string{"api.example.com"},
-			UpstreamURL: mustParseURL(t, "http://public-users-service:8080"),
+			Name:       "public-users",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/users",
+			Methods:    []string{"GET"},
+			Hosts:      []string{"api.example.com"},
+			Upstream:   testUpstream(t, "http://public-users-service:8080"),
 		},
 		{
-			Name:        "internal-users",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/users",
-			Methods:     []string{"GET"},
-			Hosts:       []string{"api.internal"},
-			UpstreamURL: mustParseURL(t, "http://internal-users-service:8080"),
+			Name:       "internal-users",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/users",
+			Methods:    []string{"GET"},
+			Hosts:      []string{"api.internal"},
+			Upstream:   testUpstream(t, "http://internal-users-service:8080"),
 		},
 	})
 	if err != nil {
@@ -2751,16 +2754,16 @@ func TestRouterMatchHost(t *testing.T) {
 
 func TestRouterMatchPrefersExactPathOverEqualPrefix(t *testing.T) {
 	exactRoute := Route{
-		Name:        "exact-users",
-		Protocol:    ProtocolHTTP,
-		PathExact:   "/users",
-		UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+		Name:      "exact-users",
+		Protocol:  ProtocolHTTP,
+		PathExact: "/users",
+		Upstream:  testUpstream(t, "http://exact-users-service:8080"),
 	}
 	prefixRoute := Route{
-		Name:        "prefix-users",
-		Protocol:    ProtocolHTTP,
-		PathPrefix:  "/users",
-		UpstreamURL: mustParseURL(t, "http://prefix-users-service:8080"),
+		Name:       "prefix-users",
+		Protocol:   ProtocolHTTP,
+		PathPrefix: "/users",
+		Upstream:   testUpstream(t, "http://prefix-users-service:8080"),
 	}
 
 	tests := []struct {
@@ -2805,18 +2808,18 @@ func TestRouterMatchPrefersExactPathOverEqualPrefix(t *testing.T) {
 
 func TestRouterMatchUsesPriorityAfterPathSpecificity(t *testing.T) {
 	lowPriorityRoute := Route{
-		Name:        "low-priority",
-		Protocol:    ProtocolHTTP,
-		PathPrefix:  "/users",
-		Priority:    0,
-		UpstreamURL: mustParseURL(t, "http://low-priority-service:8080"),
+		Name:       "low-priority",
+		Protocol:   ProtocolHTTP,
+		PathPrefix: "/users",
+		Priority:   0,
+		Upstream:   testUpstream(t, "http://low-priority-service:8080"),
 	}
 	highPriorityRoute := Route{
-		Name:        "high-priority",
-		Protocol:    ProtocolHTTP,
-		PathPrefix:  "/users",
-		Priority:    100,
-		UpstreamURL: mustParseURL(t, "http://high-priority-service:8080"),
+		Name:       "high-priority",
+		Protocol:   ProtocolHTTP,
+		PathPrefix: "/users",
+		Priority:   100,
+		Upstream:   testUpstream(t, "http://high-priority-service:8080"),
 	}
 	headerRoute := Route{
 		Name:       "production-users",
@@ -2825,8 +2828,8 @@ func TestRouterMatchUsesPriorityAfterPathSpecificity(t *testing.T) {
 		HeaderMatches: []HeaderMatch{
 			{Name: "X-Environment", Exact: "production"},
 		},
-		Priority:    100,
-		UpstreamURL: mustParseURL(t, "http://production-users-service:8080"),
+		Priority: 100,
+		Upstream: testUpstream(t, "http://production-users-service:8080"),
 	}
 
 	tests := []struct {
@@ -2853,11 +2856,11 @@ func TestRouterMatchUsesPriorityAfterPathSpecificity(t *testing.T) {
 			routes: []Route{
 				lowPriorityRoute,
 				{
-					Name:        "negative-priority",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Priority:    -10,
-					UpstreamURL: mustParseURL(t, "http://negative-priority-service:8080"),
+					Name:       "negative-priority",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Priority:   -10,
+					Upstream:   testUpstream(t, "http://negative-priority-service:8080"),
 				},
 			},
 			path:          "/users/42",
@@ -2867,18 +2870,18 @@ func TestRouterMatchUsesPriorityAfterPathSpecificity(t *testing.T) {
 			name: "longer path wins over higher priority",
 			routes: []Route{
 				{
-					Name:        "specific-users",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/api/users",
-					Priority:    -100,
-					UpstreamURL: mustParseURL(t, "http://specific-users-service:8080"),
+					Name:       "specific-users",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/api/users",
+					Priority:   -100,
+					Upstream:   testUpstream(t, "http://specific-users-service:8080"),
 				},
 				{
-					Name:        "high-priority-api",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/api",
-					Priority:    1_000,
-					UpstreamURL: mustParseURL(t, "http://high-priority-api-service:8080"),
+					Name:       "high-priority-api",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/api",
+					Priority:   1_000,
+					Upstream:   testUpstream(t, "http://high-priority-api-service:8080"),
 				},
 			},
 			path:          "/api/users/42",
@@ -2888,18 +2891,18 @@ func TestRouterMatchUsesPriorityAfterPathSpecificity(t *testing.T) {
 			name: "exact path wins over higher priority prefix",
 			routes: []Route{
 				{
-					Name:        "exact-users",
-					Protocol:    ProtocolHTTP,
-					PathExact:   "/users",
-					Priority:    -100,
-					UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+					Name:      "exact-users",
+					Protocol:  ProtocolHTTP,
+					PathExact: "/users",
+					Priority:  -100,
+					Upstream:  testUpstream(t, "http://exact-users-service:8080"),
 				},
 				{
-					Name:        "high-priority-prefix",
-					Protocol:    ProtocolHTTP,
-					PathPrefix:  "/users",
-					Priority:    1_000,
-					UpstreamURL: mustParseURL(t, "http://high-priority-prefix-service:8080"),
+					Name:       "high-priority-prefix",
+					Protocol:   ProtocolHTTP,
+					PathPrefix: "/users",
+					Priority:   1_000,
+					Upstream:   testUpstream(t, "http://high-priority-prefix-service:8080"),
 				},
 			},
 			path:          "/users",
@@ -2942,16 +2945,16 @@ func TestRouterMatchUsesPriorityAfterPathSpecificity(t *testing.T) {
 func TestRouterMatchExactPathPreservesTrailingSlash(t *testing.T) {
 	routeRouter, err := New([]Route{
 		{
-			Name:        "fallback",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/",
-			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+			Name:       "fallback",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/",
+			Upstream:   testUpstream(t, "http://fallback-service:8080"),
 		},
 		{
-			Name:        "exact-users",
-			Protocol:    ProtocolHTTP,
-			PathExact:   "/users/",
-			UpstreamURL: mustParseURL(t, "http://exact-users-service:8080"),
+			Name:      "exact-users",
+			Protocol:  ProtocolHTTP,
+			PathExact: "/users/",
+			Upstream:  testUpstream(t, "http://exact-users-service:8080"),
 		},
 	})
 	if err != nil {
@@ -2996,10 +2999,10 @@ func TestRouterMatchExactPathPreservesTrailingSlash(t *testing.T) {
 func TestRouterMatchHeaders(t *testing.T) {
 	routeRouter, err := New([]Route{
 		{
-			Name:        "fallback",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/",
-			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+			Name:       "fallback",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/",
+			Upstream:   testUpstream(t, "http://fallback-service:8080"),
 		},
 		{
 			Name:       "production-users",
@@ -3008,7 +3011,7 @@ func TestRouterMatchHeaders(t *testing.T) {
 			HeaderMatches: []HeaderMatch{
 				{Name: "X-Environment", Exact: "production"},
 			},
-			UpstreamURL: mustParseURL(t, "http://production-users-service:8080"),
+			Upstream: testUpstream(t, "http://production-users-service:8080"),
 		},
 		{
 			Name:       "staging-users",
@@ -3017,7 +3020,7 @@ func TestRouterMatchHeaders(t *testing.T) {
 			HeaderMatches: []HeaderMatch{
 				{Name: "X-Environment", Exact: "staging"},
 			},
-			UpstreamURL: mustParseURL(t, "http://staging-users-service:8080"),
+			Upstream: testUpstream(t, "http://staging-users-service:8080"),
 		},
 	})
 	if err != nil {
@@ -3066,25 +3069,25 @@ func TestRouterMatchHeaders(t *testing.T) {
 func TestRouterAllowedMethods(t *testing.T) {
 	routeRouter, err := New([]Route{
 		{
-			Name:        "api-read",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+			Name:       "api-read",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstream(t, "http://api-read-service:8080"),
 		},
 		{
-			Name:        "admin-write",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api/admin",
-			Methods:     []string{"POST"},
-			UpstreamURL: mustParseURL(t, "http://admin-write-service:8080"),
+			Name:       "admin-write",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api/admin",
+			Methods:    []string{"POST"},
+			Upstream:   testUpstream(t, "http://admin-write-service:8080"),
 		},
 		{
-			Name:        "audit-read",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api/admin/audit",
-			Methods:     []string{"GET"},
-			UpstreamURL: mustParseURL(t, "http://audit-read-service:8080"),
+			Name:       "audit-read",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api/admin/audit",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstream(t, "http://audit-read-service:8080"),
 		},
 	})
 	if err != nil {
@@ -3128,17 +3131,17 @@ func TestRouterAllowedMethods(t *testing.T) {
 func TestRouterAllowedMethodsReturnsNilForWildcardRoute(t *testing.T) {
 	routeRouter, err := New([]Route{
 		{
-			Name:        "fallback",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/",
-			UpstreamURL: mustParseURL(t, "http://fallback-service:8080"),
+			Name:       "fallback",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/",
+			Upstream:   testUpstream(t, "http://fallback-service:8080"),
 		},
 		{
-			Name:        "api-read",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+			Name:       "api-read",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstream(t, "http://api-read-service:8080"),
 		},
 	})
 	if err != nil {
@@ -3153,28 +3156,28 @@ func TestRouterAllowedMethodsReturnsNilForWildcardRoute(t *testing.T) {
 func TestRouterAllowedMethodsFiltersByHost(t *testing.T) {
 	routeRouter, err := New([]Route{
 		{
-			Name:        "public-api-read",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			Hosts:       []string{"api.example.com"},
-			UpstreamURL: mustParseURL(t, "http://public-api-service:8080"),
+			Name:       "public-api-read",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Hosts:      []string{"api.example.com"},
+			Upstream:   testUpstream(t, "http://public-api-service:8080"),
 		},
 		{
-			Name:        "public-admin-write",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api/admin",
-			Methods:     []string{"POST"},
-			Hosts:       []string{"api.example.com"},
-			UpstreamURL: mustParseURL(t, "http://public-admin-service:8080"),
+			Name:       "public-admin-write",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api/admin",
+			Methods:    []string{"POST"},
+			Hosts:      []string{"api.example.com"},
+			Upstream:   testUpstream(t, "http://public-admin-service:8080"),
 		},
 		{
-			Name:        "internal-api",
-			Protocol:    ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"DELETE"},
-			Hosts:       []string{"api.internal"},
-			UpstreamURL: mustParseURL(t, "http://internal-api-service:8080"),
+			Name:       "internal-api",
+			Protocol:   ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"DELETE"},
+			Hosts:      []string{"api.internal"},
+			Upstream:   testUpstream(t, "http://internal-api-service:8080"),
 		},
 	})
 	if err != nil {
@@ -3222,7 +3225,7 @@ func TestRouterAllowedMethodsFiltersByHeaders(t *testing.T) {
 			HeaderMatches: []HeaderMatch{
 				{Name: "X-Environment", Exact: "production"},
 			},
-			UpstreamURL: mustParseURL(t, "http://production-users-service:8080"),
+			Upstream: testUpstream(t, "http://production-users-service:8080"),
 		},
 	})
 	if err != nil {
@@ -3419,4 +3422,20 @@ func mustParseURL(t *testing.T, rawURL string) *url.URL {
 	}
 
 	return parsedURL
+}
+
+func testUpstream(t *testing.T, rawURL string) *Upstream {
+	t.Helper()
+
+	return testUpstreamURL(mustParseURL(t, rawURL))
+}
+
+func testUpstreamURL(targetURL *url.URL) *Upstream {
+	if targetURL == nil {
+		return nil
+	}
+	return &Upstream{
+		LoadBalancing: LoadBalancingPolicyRoundRobin,
+		Endpoints:     []url.URL{*targetURL},
+	}
 }
