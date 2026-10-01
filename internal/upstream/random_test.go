@@ -20,7 +20,7 @@ func TestNewRandomRejectsEmptyEndpoints(t *testing.T) {
 	}
 }
 
-func TestRandomNextReturnsConfiguredEndpoint(t *testing.T) {
+func TestRandomAcquireReturnsConfiguredEndpoint(t *testing.T) {
 	endpoints := []url.URL{
 		{Scheme: "http", Host: "one.example"},
 		{Scheme: "http", Host: "two.example"},
@@ -37,14 +37,14 @@ func TestRandomNextReturnsConfiguredEndpoint(t *testing.T) {
 	}
 
 	for range 1_000 {
-		host := picker.Next().Host
+		host := acquireTarget(picker).Host
 		if _, exists := validHosts[host]; !exists {
-			t.Fatalf("Next() returned unknown host %q", host)
+			t.Fatalf("Acquire() returned unknown host %q", host)
 		}
 	}
 }
 
-func TestRandomNextWithSingleEndpointIsStable(t *testing.T) {
+func TestRandomAcquireWithSingleEndpointIsStable(t *testing.T) {
 	picker, err := upstream.NewRandom([]url.URL{
 		{Scheme: "http", Host: "only.example"},
 	})
@@ -53,8 +53,8 @@ func TestRandomNextWithSingleEndpointIsStable(t *testing.T) {
 	}
 
 	for range 100 {
-		if got := picker.Next().Host; got != "only.example" {
-			t.Fatalf("Next() host = %q, want %q", got, "only.example")
+		if got := acquireTarget(picker).Host; got != "only.example" {
+			t.Fatalf("Acquire() host = %q, want %q", got, "only.example")
 		}
 	}
 }
@@ -79,9 +79,9 @@ func TestRandomReplacePublishesNewSnapshot(t *testing.T) {
 	}
 
 	for range 1_000 {
-		host := picker.Next().Host
+		host := acquireTarget(picker).Host
 		if _, exists := validHosts[host]; !exists {
-			t.Fatalf("Next() returned host %q from an inactive snapshot", host)
+			t.Fatalf("Acquire() returned host %q from an inactive snapshot", host)
 		}
 	}
 }
@@ -98,8 +98,8 @@ func TestRandomReplaceRejectsEmptySnapshotAndKeepsCurrent(t *testing.T) {
 		if err := picker.Replace(endpoints); err == nil {
 			t.Error("Replace() error = nil, want non-nil")
 		}
-		if got := picker.Next().Host; got != "current.example" {
-			t.Errorf("Next() host after rejected Replace() = %q, want %q", got, "current.example")
+		if got := acquireTarget(picker).Host; got != "current.example" {
+			t.Errorf("Acquire() host after rejected Replace() = %q, want %q", got, "current.example")
 		}
 	}
 }
@@ -119,18 +119,18 @@ func TestRandomReplaceCopiesEndpoints(t *testing.T) {
 	}
 
 	replacement[0].Host = "mutated-input.example"
-	got := picker.Next()
+	got := acquireTarget(picker)
 	if got.Host != "replacement.example" {
-		t.Errorf("Next() host after input mutation = %q, want %q", got.Host, "replacement.example")
+		t.Errorf("Acquire() host after input mutation = %q, want %q", got.Host, "replacement.example")
 	}
 
 	got.Host = "mutated-result.example"
-	if next := picker.Next().Host; next != "replacement.example" {
-		t.Errorf("Next() host after result mutation = %q, want %q", next, "replacement.example")
+	if next := acquireTarget(picker).Host; next != "replacement.example" {
+		t.Errorf("Acquire() host after result mutation = %q, want %q", next, "replacement.example")
 	}
 }
 
-func TestRandomNextAndReplaceAreSafeForConcurrentUse(t *testing.T) {
+func TestRandomAcquireAndReplaceAreSafeForConcurrentUse(t *testing.T) {
 	const (
 		readerCount    = 20
 		callsPerReader = 500
@@ -165,9 +165,9 @@ func TestRandomNextAndReplaceAreSafeForConcurrentUse(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			for range callsPerReader {
-				host := picker.Next().Host
+				host := acquireTarget(picker).Host
 				if _, exists := validHosts[host]; !exists {
-					t.Errorf("Next() returned unknown host %q", host)
+					t.Errorf("Acquire() returned unknown host %q", host)
 				}
 			}
 		}()

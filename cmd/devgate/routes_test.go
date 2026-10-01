@@ -604,6 +604,19 @@ func TestUpstreamFromConfig(t *testing.T) {
 			wantEndpoints: []string{"http://server-1:8080", "http://server-2:8080"},
 		},
 		{
+			name: "new upstream uses least requests policy",
+			route: config.RouteConfig{
+				Name: "users",
+				Upstream: staticUpstream(
+					config.LoadBalancingPolicyLeastRequests,
+					"http://server-1:8080",
+					"http://server-2:8080",
+				),
+			},
+			wantPolicy:    router.LoadBalancingPolicyLeastRequests,
+			wantEndpoints: []string{"http://server-1:8080", "http://server-2:8080"},
+		},
+		{
 			name: "unsupported policy",
 			route: config.RouteConfig{
 				Name:     "users",

@@ -8,24 +8,26 @@ import (
 	"github.com/chyioishi/devgate/internal/upstream"
 )
 
-func BenchmarkRoundRobinNext(b *testing.B) {
+func BenchmarkRoundRobinAcquire(b *testing.B) {
 	picker := newBenchmarkRoundRobin(b, 10)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = picker.Next()
+		_, release := picker.Acquire()
+		release()
 	}
 }
 
-func BenchmarkRoundRobinNextParallel(b *testing.B) {
+func BenchmarkRoundRobinAcquireParallel(b *testing.B) {
 	picker := newBenchmarkRoundRobin(b, 10)
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = picker.Next()
+			_, release := picker.Acquire()
+			release()
 		}
 	})
 }
