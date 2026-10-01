@@ -17,6 +17,7 @@ import (
 	"github.com/chyioishi/devgate/internal/requestbodylimit"
 	"github.com/chyioishi/devgate/internal/requesttimeout"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/chyioishi/devgate/internal/upstream"
 )
 
 func handlersFromRoutes(
@@ -41,7 +42,7 @@ func handlersFromRoutes(
 		var actionCount int
 		var err error
 
-		if route.UpstreamURL != nil {
+		if route.Upstream != nil {
 			actionCount++
 		}
 		if route.DirectResponse != nil {
@@ -73,7 +74,7 @@ func handlersFromRoutes(
 		}
 
 		switch {
-		case route.UpstreamURL != nil:
+		case route.Upstream != nil:
 			switch route.Protocol {
 			case router.ProtocolHTTP:
 				circuitBreakerRouteMetrics := circuitBreakerMetrics.ForRoute(route.Name)
@@ -92,8 +93,26 @@ func handlersFromRoutes(
 					requestHeaderTransform = route.RequestHeaders.Apply
 				}
 
+				var targetPicker proxy.TargetPicker
+				switch route.Upstream.LoadBalancing {
+				case router.LoadBalancingPolicyRoundRobin:
+					targetPicker, err = upstream.NewRoundRobin(route.Upstream.Endpoints)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"create round-robin target picker for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+				default:
+					return nil, fmt.Errorf(
+						"create handler for route %q: unsupported load balancing policy %q",
+						route.Name,
+						route.Upstream.LoadBalancing,
+					)
+				}
 				routeHandler = proxy.New(
-					route.UpstreamURL,
+					targetPicker,
 					circuitBreakerTransport,
 					requestHeaderTransform,
 					responseHeaderTransform,

@@ -13,13 +13,9 @@ import (
 func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error) {
 	routes := make([]router.Route, 0, len(routeConfigs))
 	for _, routeConfig := range routeConfigs {
-		var upstreamURL *url.URL
-		var err error
-		if routeConfig.UpstreamURL != "" {
-			upstreamURL, err = url.Parse(routeConfig.UpstreamURL)
-			if err != nil {
-				return nil, fmt.Errorf("parse upstream URL for route %q: %w", routeConfig.Name, err)
-			}
+		routeUpstream, err := upstreamFromConfig(routeConfig)
+		if err != nil {
+			return nil, err
 		}
 		var directResponse *router.DirectResponse
 		if routeConfig.DirectResponse != nil {
@@ -57,7 +53,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			Methods:             slices.Clone(routeConfig.Methods),
 			Hosts:               slices.Clone(routeConfig.Hosts),
 			Priority:            routeConfig.Priority,
-			UpstreamURL:         upstreamURL,
+			Upstream:            routeUpstream,
 			DirectResponse:      directResponse,
 			Redirect:            redirect,
 			ErrorResponses:      errorResponsesFromConfig(routeConfig.ErrorResponses),
@@ -102,6 +98,65 @@ func headerMatchesFromConfig(configHeaderMatches []config.HeaderMatchConfig) []r
 	}
 
 	return routeHeaderMatches
+}
+
+func upstreamFromConfig(routeConfig config.RouteConfig) (*router.Upstream, error) {
+	if routeConfig.Upstream != nil && routeConfig.UpstreamURL != "" {
+		return nil, fmt.Errorf("both upstream and upstream URL are configured for route %q", routeConfig.Name)
+	}
+	if routeConfig.Upstream == nil && routeConfig.UpstreamURL == "" {
+		return nil, nil
+	}
+
+	if routeConfig.UpstreamURL != "" {
+		upstreamURL, err := url.Parse(routeConfig.UpstreamURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse upstream URL for route %q: %w", routeConfig.Name, err)
+		}
+		routeUpstream := &router.Upstream{
+			LoadBalancing: router.LoadBalancingPolicyRoundRobin,
+			Endpoints:     []url.URL{*upstreamURL},
+		}
+		return routeUpstream, nil
+	}
+	if routeConfig.Upstream != nil {
+		if routeConfig.Upstream.Discovery == nil {
+			return nil, fmt.Errorf("no discovery configuration for upstream of route %q", routeConfig.Name)
+		}
+		if routeConfig.Upstream.Discovery.Static == nil {
+			return nil, fmt.Errorf("no static discovery configuration for upstream of route %q", routeConfig.Name)
+		}
+		var loadBalancing router.LoadBalancingPolicy
+		switch routeConfig.Upstream.LoadBalancing {
+		case "", config.LoadBalancingPolicyRoundRobin:
+			loadBalancing = router.LoadBalancingPolicyRoundRobin
+		default:
+			return nil, fmt.Errorf(
+				"invalid load balancing policy %q for route %q",
+				routeConfig.Upstream.LoadBalancing,
+				routeConfig.Name,
+			)
+		}
+		routeUpstream := &router.Upstream{
+			LoadBalancing: loadBalancing,
+			Endpoints:     make([]url.URL, len(routeConfig.Upstream.Discovery.Static.Endpoints)),
+		}
+		for i, endpointConfig := range routeConfig.Upstream.Discovery.Static.Endpoints {
+			parsedEndpoint, err := url.Parse(endpointConfig.URL)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"parse upstream endpoint [%d] for route %q: %w",
+					i,
+					routeConfig.Name,
+					err,
+				)
+			}
+			routeUpstream.Endpoints[i] = *parsedEndpoint
+		}
+		return routeUpstream, nil
+	}
+
+	return nil, nil
 }
 
 func errorResponsesFromConfig(configErrorResponses map[int]config.ErrorResponseConfig) map[int]router.ErrorResponse {
