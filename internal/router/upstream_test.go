@@ -27,6 +27,16 @@ func TestUpstreamValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "valid random policy",
+			upstream: Upstream{
+				LoadBalancing: LoadBalancingPolicyRandom,
+				Endpoints: []url.URL{
+					{Scheme: "http", Host: "server-1:8080"},
+					{Scheme: "http", Host: "server-2:8080"},
+				},
+			},
+		},
+		{
 			name: "unsupported load balancing policy",
 			upstream: Upstream{
 				LoadBalancing: "least_connections",

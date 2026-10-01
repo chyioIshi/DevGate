@@ -168,6 +168,62 @@ func TestHandlersFromRoutesCreatesRoundRobinHandler(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesCreatesRandomHandler(t *testing.T) {
+	t.Parallel()
+
+	route := router.Route{
+		Name:       "users",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/api/users",
+		Upstream: &router.Upstream{
+			LoadBalancing: router.LoadBalancingPolicyRandom,
+			Endpoints: []url.URL{
+				*mustParseRouteURL(t, "http://server-1:8080"),
+				*mustParseRouteURL(t, "https://server-2:8443"),
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		[]router.Route{route},
+		&countingRoundTripper{},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	reverseProxy, ok := handlers[route.Name].(*httputil.ReverseProxy)
+	if !ok {
+		t.Fatalf(
+			"handler for route %q has type %T, want *httputil.ReverseProxy",
+			route.Name,
+			handlers[route.Name],
+		)
+	}
+
+	wantTargets := map[string]struct{}{
+		"http://server-1:8080/request":  {},
+		"https://server-2:8443/request": {},
+	}
+	for i := range 100 {
+		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
+		proxyRequest := &httputil.ProxyRequest{
+			In:  request,
+			Out: request.Clone(request.Context()),
+		}
+		reverseProxy.Rewrite(proxyRequest)
+		got := proxyRequest.Out.URL.String()
+		if _, exists := wantTargets[got]; !exists {
+			t.Fatalf("request %d target = %q, want a configured endpoint", i, got)
+		}
+	}
+}
+
 func TestHandlersFromRoutesAppliesCustomProxyErrorResponse(t *testing.T) {
 	routes := []router.Route{
 		{

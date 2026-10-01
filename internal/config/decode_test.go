@@ -198,6 +198,36 @@ routes:
 	}
 }
 
+func TestDecodeConfigRandomLoadBalancingPolicy(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /users
+    upstream:
+      load_balancing: random
+      discovery:
+        static:
+          endpoints:
+            - url: http://users-1:8080
+            - url: http://users-2:8080
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+	if len(got.Routes) != 1 {
+		t.Fatalf("decodeConfig() route count = %d, want 1", len(got.Routes))
+	}
+	if got.Routes[0].Upstream == nil {
+		t.Fatal("decodeConfig() upstream = nil, want non-nil")
+	}
+	if policy := got.Routes[0].Upstream.LoadBalancing; policy != LoadBalancingPolicyRandom {
+		t.Errorf("decodeConfig() policy = %q, want %q", policy, LoadBalancingPolicyRandom)
+	}
+}
+
 func TestDecodeConfigRejectsUnknownUpstreamFields(t *testing.T) {
 	tests := []struct {
 		name         string

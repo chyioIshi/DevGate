@@ -537,6 +537,7 @@ func TestUpstreamFromConfig(t *testing.T) {
 		name          string
 		route         config.RouteConfig
 		wantNil       bool
+		wantPolicy    router.LoadBalancingPolicy
 		wantEndpoints []string
 		wantMessage   string
 	}{
@@ -588,6 +589,19 @@ func TestUpstreamFromConfig(t *testing.T) {
 				),
 			},
 			wantEndpoints: []string{"http://server-1:8080"},
+		},
+		{
+			name: "new upstream uses random policy",
+			route: config.RouteConfig{
+				Name: "users",
+				Upstream: staticUpstream(
+					config.LoadBalancingPolicyRandom,
+					"http://server-1:8080",
+					"http://server-2:8080",
+				),
+			},
+			wantPolicy:    router.LoadBalancingPolicyRandom,
+			wantEndpoints: []string{"http://server-1:8080", "http://server-2:8080"},
 		},
 		{
 			name: "unsupported policy",
@@ -655,11 +669,15 @@ func TestUpstreamFromConfig(t *testing.T) {
 			if got == nil {
 				t.Fatal("upstreamFromConfig() upstream = nil, want non-nil upstream")
 			}
-			if got.LoadBalancing != router.LoadBalancingPolicyRoundRobin {
+			wantPolicy := tt.wantPolicy
+			if wantPolicy == "" {
+				wantPolicy = router.LoadBalancingPolicyRoundRobin
+			}
+			if got.LoadBalancing != wantPolicy {
 				t.Errorf(
 					"upstreamFromConfig() policy = %q, want %q",
 					got.LoadBalancing,
-					router.LoadBalancingPolicyRoundRobin,
+					wantPolicy,
 				)
 			}
 			gotEndpoints := make([]string, len(got.Endpoints))
