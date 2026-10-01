@@ -101,7 +101,13 @@ Supported load-balancing policies:
 
 - `round_robin` selects endpoints in cyclic order and is the default when
   `load_balancing` is omitted;
-- `random` selects an endpoint uniformly at random for each request.
+- `random` selects an endpoint uniformly at random for each request;
+- `least_requests` selects the endpoint with the fewest active requests and
+  uses round-robin ordering to break ties.
+
+For `least_requests`, an endpoint remains active until its response body is
+closed, so streaming HTTP and WebSocket traffic contributes to its load for
+the lifetime of the proxied request.
 
 A static pool must contain at least one absolute HTTP or HTTPS URL.
 

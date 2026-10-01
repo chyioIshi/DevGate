@@ -17,18 +17,17 @@ type RoundRobin struct {
 // NewRoundRobin creates a picker from a non-empty snapshot of endpoints.
 func NewRoundRobin(endpoints []url.URL) (*RoundRobin, error) {
 	roundRobin := &RoundRobin{}
-	err := roundRobin.Replace(endpoints)
-	if err != nil {
+	if err := roundRobin.Replace(endpoints); err != nil {
 		return nil, err
 	}
 	return roundRobin, nil
 }
 
-// Next returns the next endpoint in the round-robin sequence.
-func (r *RoundRobin) Next() url.URL {
+// Acquire returns the next endpoint and its release function.
+func (r *RoundRobin) Acquire() (url.URL, func()) {
 	idx := r.next.Add(1) - 1
 	snapshot := r.snapshot.Load()
-	return snapshot.endpoints[idx%uint64(len(snapshot.endpoints))]
+	return snapshot.endpoints[idx%uint64(len(snapshot.endpoints))], func() {}
 }
 
 // Replace atomically publishes a copied, non-empty snapshot of endpoints.

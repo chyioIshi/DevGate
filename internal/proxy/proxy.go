@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -24,9 +25,11 @@ type ResponseHeaderTransform func(http.Header)
 // request.
 type ErrorResponder func(http.ResponseWriter, *http.Request, int)
 
+type releaseContextKey struct{}
+
 // TargetPicker selects an upstream target for an incoming proxy request.
 type TargetPicker interface {
-	Next() url.URL
+	Acquire() (url.URL, func())
 }
 
 // New creates a reverse proxy that selects an upstream target for
@@ -42,9 +45,16 @@ func New(
 ) *httputil.ReverseProxy {
 	trustedCIDRs = slices.Clone(trustedCIDRs)
 	proxy := &httputil.ReverseProxy{
-		Transport: transport,
+		Transport: &releasingTransport{next: transport},
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			targetURL := targetPicker.Next()
+			targetURL, release := targetPicker.Acquire()
+
+			ctx := context.WithValue(
+				pr.Out.Context(),
+				releaseContextKey{},
+				release,
+			)
+			pr.Out = pr.Out.WithContext(ctx)
 			pr.SetURL(&targetURL)
 			// Share the trailer map so values populated at inbound body EOF are
 			// available to the outbound transport.

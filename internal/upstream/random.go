@@ -17,18 +17,17 @@ type Random struct {
 // NewRandom creates a random picker from a non-empty snapshot of endpoints.
 func NewRandom(endpoints []url.URL) (*Random, error) {
 	r := &Random{}
-	err := r.Replace(endpoints)
-	if err != nil {
+	if err := r.Replace(endpoints); err != nil {
 		return nil, err
 	}
 	return r, nil
 }
 
-// Next returns a randomly selected endpoint from the current snapshot.
-func (r *Random) Next() url.URL {
+// Acquire returns a randomly selected endpoint and its release function.
+func (r *Random) Acquire() (url.URL, func()) {
 	snapshot := r.snapshot.Load()
 	idx := rand.IntN(len(snapshot.endpoints))
-	return snapshot.endpoints[idx]
+	return snapshot.endpoints[idx], func() {}
 }
 
 // Replace atomically publishes a copied, non-empty snapshot of endpoints.

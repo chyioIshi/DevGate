@@ -5,11 +5,14 @@ import "time"
 // LoadBalancingPolicy identifies an endpoint-selection policy for an upstream.
 type LoadBalancingPolicy string
 
-// LoadBalancingPolicyRoundRobin selects endpoints in cyclic order.
-const LoadBalancingPolicyRoundRobin LoadBalancingPolicy = "round_robin"
-
-// LoadBalancingPolicyRandom selects endpoints uniformly at random.
-const LoadBalancingPolicyRandom LoadBalancingPolicy = "random"
+const (
+	// LoadBalancingPolicyRoundRobin selects endpoints in cyclic order.
+	LoadBalancingPolicyRoundRobin LoadBalancingPolicy = "round_robin"
+	// LoadBalancingPolicyRandom selects endpoints uniformly at random.
+	LoadBalancingPolicyRandom LoadBalancingPolicy = "random"
+	// LoadBalancingPolicyLeastRequests selects the endpoint with the fewest active requests.
+	LoadBalancingPolicyLeastRequests LoadBalancingPolicy = "least_requests"
+)
 
 // RouteConfig describes one gateway route loaded from the configuration file.
 type RouteConfig struct {

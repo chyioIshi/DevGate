@@ -113,6 +113,15 @@ func handlersFromRoutes(
 							err,
 						)
 					}
+				case router.LoadBalancingPolicyLeastRequests:
+					targetPicker, err = upstream.NewLeastRequests(route.Upstream.Endpoints)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"create least-requests target picker for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
 				default:
 					return nil, fmt.Errorf(
 						"create handler for route %q: unsupported load balancing policy %q",

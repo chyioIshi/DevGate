@@ -132,6 +132,8 @@ func upstreamFromConfig(routeConfig config.RouteConfig) (*router.Upstream, error
 			loadBalancing = router.LoadBalancingPolicyRoundRobin
 		case config.LoadBalancingPolicyRandom:
 			loadBalancing = router.LoadBalancingPolicyRandom
+		case config.LoadBalancingPolicyLeastRequests:
+			loadBalancing = router.LoadBalancingPolicyLeastRequests
 		default:
 			return nil, fmt.Errorf(
 				"invalid load balancing policy %q for route %q",

@@ -10,11 +10,14 @@ import (
 // LoadBalancingPolicy identifies how requests are distributed across upstream endpoints.
 type LoadBalancingPolicy string
 
-// LoadBalancingPolicyRoundRobin selects upstream endpoints in cyclic order.
-const LoadBalancingPolicyRoundRobin LoadBalancingPolicy = "round_robin"
-
-// LoadBalancingPolicyRandom selects upstream endpoints uniformly at random.
-const LoadBalancingPolicyRandom LoadBalancingPolicy = "random"
+const (
+	// LoadBalancingPolicyRoundRobin selects endpoints in cyclic order.
+	LoadBalancingPolicyRoundRobin LoadBalancingPolicy = "round_robin"
+	// LoadBalancingPolicyRandom selects endpoints uniformly at random.
+	LoadBalancingPolicyRandom LoadBalancingPolicy = "random"
+	// LoadBalancingPolicyLeastRequests selects the endpoint with the fewest active requests.
+	LoadBalancingPolicyLeastRequests LoadBalancingPolicy = "least_requests"
+)
 
 // Upstream describes a group of backend endpoints and its load-balancing policy.
 type Upstream struct {
@@ -24,7 +27,9 @@ type Upstream struct {
 
 func (u *Upstream) validate() error {
 	switch u.LoadBalancing {
-	case LoadBalancingPolicyRoundRobin, LoadBalancingPolicyRandom:
+	case LoadBalancingPolicyRoundRobin,
+		LoadBalancingPolicyRandom,
+		LoadBalancingPolicyLeastRequests:
 	default:
 		return fmt.Errorf(
 			"unsupported load balancing policy %q",
