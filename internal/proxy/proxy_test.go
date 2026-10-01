@@ -37,8 +37,8 @@ type staticTestTargetPicker struct {
 	target url.URL
 }
 
-func (p staticTestTargetPicker) Next() url.URL {
-	return p.target
+func (p staticTestTargetPicker) Acquire() (url.URL, func()) {
+	return p.target, func() {}
 }
 
 func testTargetPicker(targetURL *url.URL) TargetPicker {

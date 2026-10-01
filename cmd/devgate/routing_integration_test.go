@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/gateway"
@@ -261,6 +263,132 @@ func TestConfiguredUpstreamPoolRoutesRequestsRandomly(t *testing.T) {
 		if got := recorder.Body.String(); got != "A" && got != "B" {
 			t.Fatalf("request %d body = %q, want response from a configured endpoint", i, got)
 		}
+	}
+}
+
+func TestConfiguredUpstreamPoolRoutesConcurrentRequestToLeastLoadedEndpoint(t *testing.T) {
+	const signalTimeout = 5 * time.Second
+
+	firstUpstreamStarted := make(chan struct{})
+	releaseFirstUpstream := make(chan struct{})
+	var startedOnce sync.Once
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseFirstUpstream)
+		})
+	}
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedOnce.Do(func() {
+			close(firstUpstreamStarted)
+		})
+		select {
+		case <-releaseFirstUpstream:
+			_, _ = io.WriteString(w, "A")
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(serverA.Close)
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "B")
+	}))
+	t.Cleanup(serverB.Close)
+	// Registered last so it runs before the upstream server cleanup and cannot
+	// leave serverA.Close blocked behind an active handler after a test failure.
+	t.Cleanup(release)
+
+	routes, err := routesFromConfig([]config.RouteConfig{
+		{
+			Name:       "users",
+			Protocol:   "http",
+			PathPrefix: "/users",
+			Upstream: &config.UpstreamConfig{
+				LoadBalancing: config.LoadBalancingPolicyLeastRequests,
+				Discovery: &config.UpstreamDiscoveryConfig{
+					Static: &config.StaticUpstreamDiscoveryConfig{
+						Endpoints: []config.UpstreamEndpointConfig{
+							{URL: serverA.URL},
+							{URL: serverB.URL},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+	routeRouter, err := router.New(routes)
+	if err != nil {
+		t.Fatalf("router.New() error = %v", err)
+	}
+	registry := prometheus.NewRegistry()
+	routeHandlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	gatewayHandler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		nil,
+		discardLogger(),
+		metrics.NewHTTP(registry),
+	)
+
+	firstResponseCh := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/users", nil)
+		gatewayHandler.ServeHTTP(recorder, request)
+		firstResponseCh <- recorder
+	}()
+
+	select {
+	case <-firstUpstreamStarted:
+	case <-time.After(signalTimeout):
+		t.Fatal("first request did not reach the first upstream")
+	}
+
+	secondResponseCh := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/users", nil)
+		gatewayHandler.ServeHTTP(recorder, request)
+		secondResponseCh <- recorder
+	}()
+	select {
+	case secondRecorder := <-secondResponseCh:
+		if secondRecorder.Code != http.StatusOK {
+			t.Errorf("second response status = %d, want %d", secondRecorder.Code, http.StatusOK)
+		}
+		if got := secondRecorder.Body.String(); got != "B" {
+			t.Errorf("second response body = %q, want least-loaded upstream response %q", got, "B")
+		}
+	case <-time.After(signalTimeout):
+		t.Fatal("second request did not reach the least-loaded upstream")
+	}
+
+	release()
+	select {
+	case firstRecorder := <-firstResponseCh:
+		if firstRecorder.Code != http.StatusOK {
+			t.Errorf("first response status = %d, want %d", firstRecorder.Code, http.StatusOK)
+		}
+		if got := firstRecorder.Body.String(); got != "A" {
+			t.Errorf("first response body = %q, want %q", got, "A")
+		}
+	case <-time.After(signalTimeout):
+		t.Fatal("first request did not finish after its upstream was released")
 	}
 }
 

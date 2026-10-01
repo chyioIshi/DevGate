@@ -6,8 +6,8 @@ import (
 	"github.com/chyioishi/devgate/internal/upstream"
 )
 
-func BenchmarkRandomAcquire(b *testing.B) {
-	picker := newBenchmarkRandom(b, 10)
+func BenchmarkLeastRequestsAcquire(b *testing.B) {
+	picker := newBenchmarkLeastRequests(b, 10)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -17,8 +17,8 @@ func BenchmarkRandomAcquire(b *testing.B) {
 	}
 }
 
-func BenchmarkRandomAcquireParallel(b *testing.B) {
-	picker := newBenchmarkRandom(b, 10)
+func BenchmarkLeastRequestsAcquireParallel(b *testing.B) {
+	picker := newBenchmarkLeastRequests(b, 10)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -30,8 +30,8 @@ func BenchmarkRandomAcquireParallel(b *testing.B) {
 	})
 }
 
-func BenchmarkRandomReplace(b *testing.B) {
-	picker := newBenchmarkRandom(b, 10)
+func BenchmarkLeastRequestsReplace(b *testing.B) {
+	picker := newBenchmarkLeastRequests(b, 10)
 	endpoints := benchmarkEndpoints(10)
 
 	b.ReportAllocs()
@@ -43,12 +43,12 @@ func BenchmarkRandomReplace(b *testing.B) {
 	}
 }
 
-func newBenchmarkRandom(b *testing.B, endpointCount int) *upstream.Random {
+func newBenchmarkLeastRequests(b *testing.B, endpointCount int) *upstream.LeastRequests {
 	b.Helper()
 
-	picker, err := upstream.NewRandom(benchmarkEndpoints(endpointCount))
+	picker, err := upstream.NewLeastRequests(benchmarkEndpoints(endpointCount))
 	if err != nil {
-		b.Fatalf("NewRandom() error = %v", err)
+		b.Fatalf("NewLeastRequests() error = %v", err)
 	}
 	return picker
 }

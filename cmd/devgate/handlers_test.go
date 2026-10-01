@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/chyioishi/devgate/internal/metrics"
-	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/router"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -59,7 +58,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		t.Fatalf("handlersFromRoutes() handlers length = %d, want %d", len(handlers), len(routes))
 	}
 
-	circuitBreakers := make(map[string]*proxy.CircuitBreakerTransport, len(routes))
+	transports := make(map[string]http.RoundTripper, len(routes))
 	for _, route := range routes {
 		handler, exists := handlers[route.Name]
 		if !exists {
@@ -75,16 +74,7 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 			t.Errorf("handler for route %q has type %T, want *httputil.ReverseProxy", route.Name, handler)
 			continue
 		}
-		circuitBreaker, ok := reverseProxy.Transport.(*proxy.CircuitBreakerTransport)
-		if !ok {
-			t.Errorf(
-				"handler for route %q transport has type %T, want *proxy.CircuitBreakerTransport",
-				route.Name,
-				reverseProxy.Transport,
-			)
-			continue
-		}
-		circuitBreakers[route.Name] = circuitBreaker
+		transports[route.Name] = reverseProxy.Transport
 
 		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
 		proxyRequest := &httputil.ProxyRequest{
@@ -107,8 +97,8 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	if handlers["users"] == handlers["fallback"] {
 		t.Error("different routes share the same handler")
 	}
-	if circuitBreakers["users"] == circuitBreakers["fallback"] {
-		t.Error("different routes share the same circuit breaker")
+	if transports["users"] == transports["fallback"] {
+		t.Error("different routes share the same transport chain")
 	}
 }
 
