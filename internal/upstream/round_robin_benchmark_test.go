@@ -30,9 +30,31 @@ func BenchmarkRoundRobinNextParallel(b *testing.B) {
 	})
 }
 
+func BenchmarkRoundRobinReplace(b *testing.B) {
+	picker := newBenchmarkRoundRobin(b, 10)
+	endpoints := benchmarkEndpoints(10)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if err := picker.Replace(endpoints); err != nil {
+			b.Fatalf("Replace() error = %v", err)
+		}
+	}
+}
+
 func newBenchmarkRoundRobin(b *testing.B, endpointCount int) *upstream.RoundRobin {
 	b.Helper()
 
+	endpoints := benchmarkEndpoints(endpointCount)
+	picker, err := upstream.NewRoundRobin(endpoints)
+	if err != nil {
+		b.Fatalf("NewRoundRobin() error = %v", err)
+	}
+	return picker
+}
+
+func benchmarkEndpoints(endpointCount int) []url.URL {
 	endpoints := make([]url.URL, endpointCount)
 	for i := range endpoints {
 		endpoints[i] = url.URL{
@@ -40,9 +62,5 @@ func newBenchmarkRoundRobin(b *testing.B, endpointCount int) *upstream.RoundRobi
 			Host:   fmt.Sprintf("upstream-%d.example", i),
 		}
 	}
-	picker, err := upstream.NewRoundRobin(endpoints)
-	if err != nil {
-		b.Fatalf("NewRoundRobin() error = %v", err)
-	}
-	return picker
+	return endpoints
 }
