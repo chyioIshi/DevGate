@@ -8,6 +8,9 @@ type LoadBalancingPolicy string
 // LoadBalancingPolicyRoundRobin selects endpoints in cyclic order.
 const LoadBalancingPolicyRoundRobin LoadBalancingPolicy = "round_robin"
 
+// LoadBalancingPolicyRandom selects endpoints uniformly at random.
+const LoadBalancingPolicyRandom LoadBalancingPolicy = "random"
+
 // RouteConfig describes one gateway route loaded from the configuration file.
 type RouteConfig struct {
 	Name                string                      `yaml:"name"`
