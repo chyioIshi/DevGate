@@ -21,11 +21,11 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 	logger, logOutput := newTestLogger()
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
-			Name:        "api",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			Name:       "api",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstream(t, "http://api-service:8080"),
 		},
 	})
 	gatewayHandler := gateway.New(
@@ -71,20 +71,20 @@ func TestHandlerDispatchesToMatchedRoute(t *testing.T) {
 func TestHandlerDispatchesByHost(t *testing.T) {
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
-			Name:        "public-api",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			Hosts:       []string{"api.example.com"},
-			UpstreamURL: mustParseURL(t, "http://public-api-service:8080"),
+			Name:       "public-api",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Hosts:      []string{"api.example.com"},
+			Upstream:   testUpstream(t, "http://public-api-service:8080"),
 		},
 		{
-			Name:        "internal-api",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			Hosts:       []string{"api.internal"},
-			UpstreamURL: mustParseURL(t, "http://internal-api-service:8080"),
+			Name:       "internal-api",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Hosts:      []string{"api.internal"},
+			Upstream:   testUpstream(t, "http://internal-api-service:8080"),
 		},
 	})
 	handler := gateway.New(
@@ -140,12 +140,12 @@ func TestHandlerDispatchesByHost(t *testing.T) {
 func TestHandlerReturnsNotFoundForUnknownHost(t *testing.T) {
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
-			Name:        "api",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			Hosts:       []string{"api.example.com"},
-			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			Name:       "api",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Hosts:      []string{"api.example.com"},
+			Upstream:   testUpstream(t, "http://api-service:8080"),
 		},
 	})
 	handlerCalled := false
@@ -182,18 +182,18 @@ func TestHandlerReturnsMethodNotAllowed(t *testing.T) {
 	logger, logOutput := newTestLogger()
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
-			Name:        "api-read",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			Methods:     []string{"GET"},
-			UpstreamURL: mustParseURL(t, "http://api-read-service:8080"),
+			Name:       "api-read",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Methods:    []string{"GET"},
+			Upstream:   testUpstream(t, "http://api-read-service:8080"),
 		},
 		{
-			Name:        "admin-write",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/admin",
-			Methods:     []string{"POST"},
-			UpstreamURL: mustParseURL(t, "http://admin-write-service:8080"),
+			Name:       "admin-write",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/admin",
+			Methods:    []string{"POST"},
+			Upstream:   testUpstream(t, "http://admin-write-service:8080"),
 		},
 	})
 	handlerCalled := false
@@ -271,7 +271,7 @@ func TestHandlerClassifiesMethodMismatchAfterHeaderMatching(t *testing.T) {
 					HeaderMatches: []router.HeaderMatch{
 						{Name: "X-Environment", Exact: "production"},
 					},
-					UpstreamURL: mustParseURL(t, "http://production-api-service:8080"),
+					Upstream: testUpstream(t, "http://production-api-service:8080"),
 				},
 			})
 			handlerCalled := false
@@ -312,10 +312,10 @@ func TestHandlerReturnsNotFoundWhenRouteDoesNotMatch(t *testing.T) {
 	logger, logOutput := newTestLogger()
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
-			Name:        "api",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			Name:       "api",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Upstream:   testUpstream(t, "http://api-service:8080"),
 		},
 	})
 	handlerCalled := false
@@ -356,10 +356,10 @@ func TestHandlerReturnsInternalServerErrorWhenRouteHandlerIsMissing(t *testing.T
 	logger, logOutput := newTestLogger()
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
-			Name:        "api",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			Name:       "api",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Upstream:   testUpstream(t, "http://api-service:8080"),
 		},
 	})
 	handler := gateway.New(routeRouter, nil, nil, logger, metrics.NewHTTP(prometheus.NewRegistry()))
@@ -399,10 +399,10 @@ func TestHandlerUsesErrorResponder(t *testing.T) {
 		{
 			name: "route not found",
 			route: router.Route{
-				Name:        "api",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+				Name:       "api",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream:   testUpstream(t, "http://api-service:8080"),
 			},
 			routeHandlers: map[string]http.Handler{"api": http.NotFoundHandler()},
 			method:        http.MethodGet,
@@ -412,11 +412,11 @@ func TestHandlerUsesErrorResponder(t *testing.T) {
 		{
 			name: "method not allowed",
 			route: router.Route{
-				Name:        "api",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				Methods:     []string{http.MethodGet},
-				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+				Name:       "api",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Methods:    []string{http.MethodGet},
+				Upstream:   testUpstream(t, "http://api-service:8080"),
 			},
 			routeHandlers: map[string]http.Handler{"api": http.NotFoundHandler()},
 			method:        http.MethodPost,
@@ -427,10 +427,10 @@ func TestHandlerUsesErrorResponder(t *testing.T) {
 		{
 			name: "route handler missing",
 			route: router.Route{
-				Name:        "api",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+				Name:       "api",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream:   testUpstream(t, "http://api-service:8080"),
 			},
 			method:     http.MethodGet,
 			path:       "/api/users",
@@ -481,10 +481,10 @@ func TestHandlerUsesErrorResponder(t *testing.T) {
 func TestNewCopiesRouteHandlers(t *testing.T) {
 	routeRouter := mustNewRouter(t, []router.Route{
 		{
-			Name:        "api",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api",
-			UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+			Name:       "api",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api",
+			Upstream:   testUpstream(t, "http://api-service:8080"),
 		},
 	})
 	originalCalled := false
@@ -600,4 +600,13 @@ func mustParseURL(t *testing.T, rawURL string) *url.URL {
 	}
 
 	return parsedURL
+}
+
+func testUpstream(t *testing.T, rawURL string) *router.Upstream {
+	t.Helper()
+
+	return &router.Upstream{
+		LoadBalancing: router.LoadBalancingPolicyRoundRobin,
+		Endpoints:     []url.URL{*mustParseURL(t, rawURL)},
+	}
 }

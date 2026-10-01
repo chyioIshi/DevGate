@@ -2,6 +2,12 @@ package config
 
 import "time"
 
+// LoadBalancingPolicy identifies an endpoint-selection policy for an upstream.
+type LoadBalancingPolicy string
+
+// LoadBalancingPolicyRoundRobin selects endpoints in cyclic order.
+const LoadBalancingPolicyRoundRobin LoadBalancingPolicy = "round_robin"
+
 // RouteConfig describes one gateway route loaded from the configuration file.
 type RouteConfig struct {
 	Name                string                      `yaml:"name"`
@@ -13,6 +19,7 @@ type RouteConfig struct {
 	Hosts               []string                    `yaml:"hosts"`
 	Priority            int                         `yaml:"priority"`
 	UpstreamURL         string                      `yaml:"upstream_url"`
+	Upstream            *UpstreamConfig             `yaml:"upstream"`
 	DirectResponse      *DirectResponseConfig       `yaml:"direct_response"`
 	Redirect            *RedirectConfig             `yaml:"redirect"`
 	ErrorResponses      map[int]ErrorResponseConfig `yaml:"error_responses"`
@@ -62,6 +69,30 @@ type ErrorResponseConfig struct {
 type HeaderMatchConfig struct {
 	Name  string `yaml:"name"`
 	Exact string `yaml:"exact"`
+}
+
+// UpstreamConfig configures endpoint discovery and load balancing for an
+// upstream route.
+type UpstreamConfig struct {
+	LoadBalancing LoadBalancingPolicy      `yaml:"load_balancing"`
+	Discovery     *UpstreamDiscoveryConfig `yaml:"discovery"`
+}
+
+// UpstreamDiscoveryConfig selects one source of upstream endpoints.
+type UpstreamDiscoveryConfig struct {
+	Static *StaticUpstreamDiscoveryConfig `yaml:"static"`
+}
+
+// StaticUpstreamDiscoveryConfig defines endpoints supplied directly in the
+// configuration file.
+type StaticUpstreamDiscoveryConfig struct {
+	Endpoints []UpstreamEndpointConfig `yaml:"endpoints"`
+}
+
+// UpstreamEndpointConfig identifies one statically configured upstream
+// endpoint.
+type UpstreamEndpointConfig struct {
+	URL string `yaml:"url"`
 }
 
 type fileConfig struct {

@@ -24,8 +24,15 @@ type ResponseHeaderTransform func(http.Header)
 // request.
 type ErrorResponder func(http.ResponseWriter, *http.Request, int)
 
+// TargetPicker selects an upstream target for an incoming proxy request.
+type TargetPicker interface {
+	Next() url.URL
+}
+
+// New creates a reverse proxy that selects an upstream target for
+// each incoming request using targetPicker.
 func New(
-	targetURL *url.URL,
+	targetPicker TargetPicker,
 	transport http.RoundTripper,
 	requestHeaderTransform RequestHeaderTransform,
 	responseHeaderTransform ResponseHeaderTransform,
@@ -37,7 +44,8 @@ func New(
 	proxy := &httputil.ReverseProxy{
 		Transport: transport,
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.SetURL(targetURL)
+			targetURL := targetPicker.Next()
+			pr.SetURL(&targetURL)
 			// Share the trailer map so values populated at inbound body EOF are
 			// available to the outbound transport.
 			pr.Out.Trailer = pr.In.Trailer

@@ -67,10 +67,10 @@ func TestHandlerUsesErrorResponderForPanicBeforeResponse(t *testing.T) {
 	handler := gateway.New(
 		mustNewRouter(t, []router.Route{
 			{
-				Name:        "api",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+				Name:       "api",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream:   testUpstream(t, "http://api-service:8080"),
 			},
 		}),
 		map[string]http.Handler{
@@ -186,10 +186,10 @@ func newHandlerWithRoute(t *testing.T, logger *slog.Logger, routeHandler http.Ha
 	return gateway.New(
 		mustNewRouter(t, []router.Route{
 			{
-				Name:        "api",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				UpstreamURL: mustParseURL(t, "http://api-service:8080"),
+				Name:       "api",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream:   testUpstream(t, "http://api-service:8080"),
 			},
 		}),
 		map[string]http.Handler{"api": routeHandler},

@@ -29,16 +29,16 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	transport := &http.Transport{}
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 		},
 		{
-			Name:        "fallback",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/",
-			UpstreamURL: mustParseRouteURL(t, "http://frontend-service:8080"),
+			Name:       "fallback",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/",
+			Upstream:   testRouteUpstream(t, "http://frontend-service:8080"),
 		},
 	}
 
@@ -92,13 +92,14 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 			Out: request.Clone(request.Context()),
 		}
 		reverseProxy.Rewrite(proxyRequest)
-		if proxyRequest.Out.URL.Scheme != route.UpstreamURL.Scheme ||
-			proxyRequest.Out.URL.Host != route.UpstreamURL.Host {
+		target := route.Upstream.Endpoints[0]
+		if proxyRequest.Out.URL.Scheme != target.Scheme ||
+			proxyRequest.Out.URL.Host != target.Host {
 			t.Errorf(
 				"handler for route %q target = %q, want %q",
 				route.Name,
 				proxyRequest.Out.URL,
-				route.UpstreamURL,
+				&target,
 			)
 		}
 	}
@@ -111,13 +112,69 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	}
 }
 
+func TestHandlersFromRoutesCreatesRoundRobinHandler(t *testing.T) {
+	t.Parallel()
+
+	route := router.Route{
+		Name:       "users",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/api/users",
+		Upstream: &router.Upstream{
+			LoadBalancing: router.LoadBalancingPolicyRoundRobin,
+			Endpoints: []url.URL{
+				*mustParseRouteURL(t, "http://server-1:8080"),
+				*mustParseRouteURL(t, "https://server-2:8443"),
+			},
+		},
+	}
+
+	handlers, err := handlersFromRoutes(
+		[]router.Route{route},
+		&countingRoundTripper{},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	reverseProxy, ok := handlers[route.Name].(*httputil.ReverseProxy)
+	if !ok {
+		t.Fatalf(
+			"handler for route %q has type %T, want *httputil.ReverseProxy",
+			route.Name,
+			handlers[route.Name],
+		)
+	}
+
+	wantTargets := []string{
+		"http://server-1:8080/request",
+		"https://server-2:8443/request",
+		"http://server-1:8080/request",
+	}
+	for i, want := range wantTargets {
+		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
+		proxyRequest := &httputil.ProxyRequest{
+			In:  request,
+			Out: request.Clone(request.Context()),
+		}
+		reverseProxy.Rewrite(proxyRequest)
+		if got := proxyRequest.Out.URL.String(); got != want {
+			t.Errorf("request %d target = %q, want %q", i, got, want)
+		}
+	}
+}
+
 func TestHandlersFromRoutesAppliesCustomProxyErrorResponse(t *testing.T) {
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 			ErrorResponses: map[int]router.ErrorResponse{
 				http.StatusBadGateway: {
 					Body: `{"error":"upstream unavailable"}`,
@@ -385,10 +442,10 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 		{
 			name: "mutually exclusive actions",
 			route: router.Route{
-				Name:        "ambiguous-action",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				UpstreamURL: mustParseRouteURL(t, "http://api-service:8080"),
+				Name:       "ambiguous-action",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream:   testRouteUpstream(t, "http://api-service:8080"),
 				DirectResponse: &router.DirectResponse{
 					StatusCode: http.StatusServiceUnavailable,
 				},
@@ -396,12 +453,39 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 			wantMessage: "multiple actions configured for route",
 		},
 		{
+			name: "empty upstream pool",
+			route: router.Route{
+				Name:       "empty-upstream",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream: &router.Upstream{
+					LoadBalancing: router.LoadBalancingPolicyRoundRobin,
+				},
+			},
+			wantMessage: "create round-robin target picker",
+		},
+		{
+			name: "unsupported load balancing policy",
+			route: router.Route{
+				Name:       "unsupported-policy",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream: &router.Upstream{
+					LoadBalancing: "least_connections",
+					Endpoints: []url.URL{
+						*mustParseRouteURL(t, "http://server-1:8080"),
+					},
+				},
+			},
+			wantMessage: `unsupported load balancing policy "least_connections"`,
+		},
+		{
 			name: "upstream and redirect",
 			route: router.Route{
-				Name:        "ambiguous-action",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				UpstreamURL: mustParseRouteURL(t, "http://api-service:8080"),
+				Name:       "ambiguous-action",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream:   testRouteUpstream(t, "http://api-service:8080"),
 				Redirect: &router.Redirect{
 					StatusCode: http.StatusPermanentRedirect,
 					Location:   "/api/v2",
@@ -450,10 +534,10 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 		{
 			name: "invalid custom error response status",
 			route: router.Route{
-				Name:        "invalid-error-response",
-				Protocol:    router.ProtocolHTTP,
-				PathPrefix:  "/api",
-				UpstreamURL: mustParseRouteURL(t, "http://api-service:8080"),
+				Name:       "invalid-error-response",
+				Protocol:   router.ProtocolHTTP,
+				PathPrefix: "/api",
+				Upstream:   testRouteUpstream(t, "http://api-service:8080"),
 				ErrorResponses: map[int]router.ErrorResponse{
 					http.StatusOK: {},
 				},
@@ -490,10 +574,10 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 			RequestHeaders: &router.HeaderTransformPolicy{
 				Set:    map[string]string{"X-Gateway": "DevGate"},
 				Remove: []string{"X-Legacy-Header"},
@@ -554,10 +638,10 @@ func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 func TestHandlersFromRoutesPassesTrustedProxyCIDRsToReverseProxy(t *testing.T) {
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 		},
 	}
 
@@ -595,16 +679,16 @@ func TestHandlersFromRoutesPassesTrustedProxyCIDRsToReverseProxy(t *testing.T) {
 func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 		},
 		{
-			Name:        "greeter",
-			Protocol:    router.ProtocolGRPC,
-			PathPrefix:  "/greeter.v1.Greeter",
-			UpstreamURL: mustParseRouteURL(t, "http://greeter-service:9090"),
+			Name:       "greeter",
+			Protocol:   router.ProtocolGRPC,
+			PathPrefix: "/greeter.v1.Greeter",
+			Upstream:   testRouteUpstream(t, "http://greeter-service:9090"),
 		},
 	}
 
@@ -635,10 +719,10 @@ func TestHandlersFromRoutesRejectsGRPCWithoutPartialResult(t *testing.T) {
 func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 	routes := []router.Route{
 		{
-			Name:        "websocket",
-			Protocol:    router.Protocol("websocket"),
-			PathPrefix:  "/ws",
-			UpstreamURL: mustParseRouteURL(t, "http://websocket-service:8080"),
+			Name:       "websocket",
+			Protocol:   router.Protocol("websocket"),
+			PathPrefix: "/ws",
+			Upstream:   testRouteUpstream(t, "http://websocket-service:8080"),
 		},
 	}
 
@@ -666,10 +750,10 @@ func TestHandlersFromRoutesRejectsUnknownProtocol(t *testing.T) {
 func TestHandlersFromRoutesReturnsCircuitBreakerConfigurationError(t *testing.T) {
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 		},
 	}
 
@@ -700,10 +784,10 @@ func TestHandlersFromRoutesReturnsCircuitBreakerConfigurationError(t *testing.T)
 func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 			RateLimit: &router.RateLimitPolicy{
 				RequestsPerSecond: 0,
 				Burst:             1,
@@ -783,7 +867,7 @@ func TestHandlersFromRoutesStripsPathPrefix(t *testing.T) {
 					Name:            "users",
 					Protocol:        router.ProtocolHTTP,
 					PathPrefix:      test.pathPrefix,
-					UpstreamURL:     mustParseRouteURL(t, "http://users-service:8080/internal"),
+					Upstream:        testRouteUpstream(t, "http://users-service:8080/internal"),
 					StripPathPrefix: test.stripPathPrefix,
 				},
 			}
@@ -835,10 +919,10 @@ func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
 	registry := prometheus.NewRegistry()
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, "http://users-service:8080"),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 			RateLimit: &router.RateLimitPolicy{
 				RequestsPerSecond: 1e-9,
 				Burst:             2,
@@ -907,7 +991,7 @@ func TestHandlersFromRoutesAppliesRequestTimeout(t *testing.T) {
 			Name:           "users",
 			Protocol:       router.ProtocolHTTP,
 			PathPrefix:     "/api/users",
-			UpstreamURL:    mustParseRouteURL(t, "http://users-service:8080"),
+			Upstream:       testRouteUpstream(t, "http://users-service:8080"),
 			RequestTimeout: 10 * time.Millisecond,
 		},
 	}
@@ -944,7 +1028,7 @@ func TestHandlersFromRoutesRejectsNegativeRequestTimeout(t *testing.T) {
 			Name:           "users",
 			Protocol:       router.ProtocolHTTP,
 			PathPrefix:     "/api/users",
-			UpstreamURL:    mustParseRouteURL(t, "http://users-service:8080"),
+			Upstream:       testRouteUpstream(t, "http://users-service:8080"),
 			RequestTimeout: -time.Nanosecond,
 		},
 	}
@@ -1015,7 +1099,7 @@ func TestHandlersFromRoutesAppliesRequestBodyLimit(t *testing.T) {
 					Name:                "users",
 					Protocol:            router.ProtocolHTTP,
 					PathPrefix:          "/api/users",
-					UpstreamURL:         mustParseRouteURL(t, "http://users-service:8080"),
+					Upstream:            testRouteUpstream(t, "http://users-service:8080"),
 					MaxRequestBodyBytes: 4,
 					ErrorResponses: map[int]router.ErrorResponse{
 						http.StatusRequestEntityTooLarge: {
@@ -1084,7 +1168,7 @@ func TestHandlersFromRoutesRejectsNegativeRequestBodyLimit(t *testing.T) {
 			Name:                "users",
 			Protocol:            router.ProtocolHTTP,
 			PathPrefix:          "/api/users",
-			UpstreamURL:         mustParseRouteURL(t, "http://users-service:8080"),
+			Upstream:            testRouteUpstream(t, "http://users-service:8080"),
 			MaxRequestBodyBytes: -1,
 		},
 	}
@@ -1201,6 +1285,15 @@ func mustParseRouteURL(t *testing.T, rawURL string) *url.URL {
 	}
 
 	return parsedURL
+}
+
+func testRouteUpstream(t *testing.T, rawURL string) *router.Upstream {
+	t.Helper()
+
+	return &router.Upstream{
+		LoadBalancing: router.LoadBalancingPolicyRoundRobin,
+		Endpoints:     []url.URL{*mustParseRouteURL(t, rawURL)},
+	}
 }
 
 func discardLogger() *slog.Logger {

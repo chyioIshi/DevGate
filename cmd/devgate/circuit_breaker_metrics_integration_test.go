@@ -25,10 +25,10 @@ func TestCircuitBreakerMetricsTrackRouteLifecycle(t *testing.T) {
 
 	routes := []router.Route{
 		{
-			Name:        "users",
-			Protocol:    router.ProtocolHTTP,
-			PathPrefix:  "/api/users",
-			UpstreamURL: mustParseRouteURL(t, upstream.URL),
+			Name:       "users",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/api/users",
+			Upstream:   testRouteUpstream(t, upstream.URL),
 		},
 	}
 	routeRouter, err := router.New(routes)

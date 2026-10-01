@@ -78,6 +78,33 @@ Routes with the same path matcher, the same priority, and overlapping method,
 host, and header conditions are rejected as ambiguous. Assign different
 priorities when the overlap is intentional.
 
+## Upstream pools
+
+An upstream route can distribute requests across a static pool of backend
+endpoints:
+
+```yaml
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream:
+      load_balancing: round_robin
+      discovery:
+        static:
+          endpoints:
+            - url: http://users-service-1:8080
+            - url: http://users-service-2:8080
+```
+
+`round_robin` selects endpoints in cyclic order and is the default when
+`load_balancing` is omitted. A static pool must contain at least one absolute
+HTTP or HTTPS URL.
+
+The legacy `upstream_url` field remains supported for single-endpoint routes.
+DevGate normalizes it internally to a round-robin pool containing one endpoint.
+`upstream` and `upstream_url` are mutually exclusive.
+
 ## Direct responses
 
 A route can return a static HTTP response without forwarding the request to an
@@ -95,9 +122,9 @@ routes:
         Retry-After: "120"
 ```
 
-Each route configures exactly one action: `upstream_url`, `direct_response`, or
-`redirect`. The `protocol` field applies only to upstream routes and must be
-omitted for a direct response.
+Each route configures exactly one action: `upstream` (or legacy
+`upstream_url`), `direct_response`, or `redirect`. The `protocol` field applies
+only to upstream routes and must be omitted for a direct response.
 
 Direct-response status codes must be between `200` and `599`. Responses with
 status `204`, `205`, or `304` cannot configure a body. Response-header
@@ -181,8 +208,8 @@ routes:
 
 Route responses support `413`, `429`, `502`, `503`, and `504`. Status `413`
 requires a request-body limit, `429` requires rate limiting, and upstream
-errors require `upstream_url`. Responses not explicitly configured retain the
-standard plain-text fallback.
+errors require an upstream action. Responses not explicitly configured retain
+the standard plain-text fallback.
 
 Custom bodies are written exactly as configured and are omitted for `HEAD`
 requests. DevGate rejects invalid headers, duplicate header names with

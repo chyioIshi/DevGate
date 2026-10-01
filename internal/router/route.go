@@ -28,7 +28,7 @@ type Route struct {
 	Methods             []string
 	Hosts               []string
 	Priority            int
-	UpstreamURL         *url.URL
+	Upstream            *Upstream
 	DirectResponse      *DirectResponse
 	Redirect            *Redirect
 	ErrorResponses      map[int]ErrorResponse
@@ -189,7 +189,7 @@ func (r Route) validate() error {
 
 func (r Route) validateAction() error {
 	actionCount := 0
-	if r.UpstreamURL != nil {
+	if r.Upstream != nil {
 		actionCount++
 	}
 	if r.DirectResponse != nil {
@@ -205,18 +205,12 @@ func (r Route) validateAction() error {
 	case actionCount > 1:
 		return errors.New("multiple actions configured for the route")
 	case actionCount == 1:
-		if r.UpstreamURL != nil {
+		if r.Upstream != nil {
 			if r.Protocol != ProtocolHTTP && r.Protocol != ProtocolGRPC {
 				return fmt.Errorf("unsupported protocol %q", r.Protocol)
 			}
-			if r.UpstreamURL.Scheme != "http" && r.UpstreamURL.Scheme != "https" {
-				return fmt.Errorf(
-					"upstream URL scheme %q must be either 'http' or 'https'",
-					r.UpstreamURL.Scheme,
-				)
-			}
-			if strings.TrimSpace(r.UpstreamURL.Host) == "" {
-				return errors.New("upstream URL host must not be empty")
+			if err := r.Upstream.validate(); err != nil {
+				return fmt.Errorf("upstream validation: %w", err)
 			}
 		}
 		if r.DirectResponse != nil {
@@ -288,7 +282,7 @@ func (r Route) validateErrorResponses() error {
 			statusCode == http.StatusServiceUnavailable ||
 			statusCode == http.StatusGatewayTimeout
 
-		if isServerErrorStatusCode && r.UpstreamURL == nil {
+		if isServerErrorStatusCode && r.Upstream == nil {
 			return fmt.Errorf("error response for status code %d requires an upstream route", statusCode)
 		}
 		if err := errorResponse.validate(); err != nil {
