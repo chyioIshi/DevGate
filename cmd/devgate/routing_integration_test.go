@@ -190,6 +190,80 @@ func TestConfiguredUpstreamPoolDistributesRequestsRoundRobin(t *testing.T) {
 	}
 }
 
+func TestConfiguredUpstreamPoolRoutesRequestsRandomly(t *testing.T) {
+	t.Parallel()
+
+	serverA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "A")
+	}))
+	t.Cleanup(serverA.Close)
+	serverB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "B")
+	}))
+	t.Cleanup(serverB.Close)
+
+	routes, err := routesFromConfig([]config.RouteConfig{
+		{
+			Name:       "users",
+			Protocol:   "http",
+			PathPrefix: "/users",
+			Upstream: &config.UpstreamConfig{
+				LoadBalancing: config.LoadBalancingPolicyRandom,
+				Discovery: &config.UpstreamDiscoveryConfig{
+					Static: &config.StaticUpstreamDiscoveryConfig{
+						Endpoints: []config.UpstreamEndpointConfig{
+							{URL: serverA.URL},
+							{URL: serverB.URL},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("routesFromConfig() error = %v", err)
+	}
+	routeRouter, err := router.New(routes)
+	if err != nil {
+		t.Fatalf("router.New() error = %v", err)
+	}
+	registry := prometheus.NewRegistry()
+	routeHandlers, err := handlersFromRoutes(
+		routes,
+		http.DefaultTransport,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		metrics.NewCircuitBreaker(registry),
+		metrics.NewRateLimiter(registry),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("handlersFromRoutes() error = %v", err)
+	}
+	gatewayHandler := gateway.New(
+		routeRouter,
+		routeHandlers,
+		nil,
+		discardLogger(),
+		metrics.NewHTTP(registry),
+	)
+
+	for i := range 100 {
+		request := httptest.NewRequest(http.MethodGet, "/users", nil)
+		recorder := httptest.NewRecorder()
+
+		gatewayHandler.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("request %d status code = %d, want %d", i, recorder.Code, http.StatusOK)
+		}
+		if got := recorder.Body.String(); got != "A" && got != "B" {
+			t.Fatalf("request %d body = %q, want response from a configured endpoint", i, got)
+		}
+	}
+}
+
 func TestConfiguredDirectResponseRouteReturnsWithoutUpstream(t *testing.T) {
 	routes, err := routesFromConfig([]config.RouteConfig{
 		{

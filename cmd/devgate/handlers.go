@@ -104,6 +104,15 @@ func handlersFromRoutes(
 							err,
 						)
 					}
+				case router.LoadBalancingPolicyRandom:
+					targetPicker, err = upstream.NewRandom(route.Upstream.Endpoints)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"create random target picker for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
 				default:
 					return nil, fmt.Errorf(
 						"create handler for route %q: unsupported load balancing policy %q",

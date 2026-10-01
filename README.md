@@ -97,9 +97,13 @@ routes:
             - url: http://users-service-2:8080
 ```
 
-`round_robin` selects endpoints in cyclic order and is the default when
-`load_balancing` is omitted. A static pool must contain at least one absolute
-HTTP or HTTPS URL.
+Supported load-balancing policies:
+
+- `round_robin` selects endpoints in cyclic order and is the default when
+  `load_balancing` is omitted;
+- `random` selects an endpoint uniformly at random for each request.
+
+A static pool must contain at least one absolute HTTP or HTTPS URL.
 
 The legacy `upstream_url` field remains supported for single-endpoint routes.
 DevGate normalizes it internally to a round-robin pool containing one endpoint.
