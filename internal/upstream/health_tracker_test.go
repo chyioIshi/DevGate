@@ -464,7 +464,7 @@ func TestHealthTrackerReplaceIsSafeForConcurrentUse(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		for range 100 {
@@ -487,5 +487,46 @@ func TestHealthTrackerReplaceIsSafeForConcurrentUse(t *testing.T) {
 			tracker.HealthyEndpoints()
 		}
 	}()
+	go func() {
+		defer wg.Done()
+		for range 100 {
+			tracker.Targets()
+		}
+	}()
 	wg.Wait()
+}
+
+func TestHealthTrackerTargetsIncludesUnhealthyEndpointsOnce(t *testing.T) {
+	t.Parallel()
+
+	first := url.URL{Scheme: "http", Host: "first.example"}
+	second := url.URL{Scheme: "http", Host: "second.example"}
+	tracker, err := NewHealthTracker([]url.URL{first, second, first}, 1, 1)
+	if err != nil {
+		t.Fatalf("NewHealthTracker() error = %v", err)
+	}
+	if changed, tracked := tracker.RecordFailure(first); !changed || !tracked {
+		t.Fatalf(
+			"RecordFailure() = (%t, %t), want (true, true)",
+			changed,
+			tracked,
+		)
+	}
+
+	assertEndpointURLs(t, tracker.Targets(), []url.URL{first, second})
+}
+
+func TestHealthTrackerTargetsReturnsIndependentSnapshot(t *testing.T) {
+	t.Parallel()
+
+	endpoint := url.URL{Scheme: "http", Host: "upstream.example"}
+	tracker, err := NewHealthTracker([]url.URL{endpoint}, 1, 1)
+	if err != nil {
+		t.Fatalf("NewHealthTracker() error = %v", err)
+	}
+
+	snapshot := tracker.Targets()
+	snapshot[0].Host = "mutated.example"
+
+	assertEndpointURLs(t, tracker.Targets(), []url.URL{endpoint})
 }
