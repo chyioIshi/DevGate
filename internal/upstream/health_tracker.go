@@ -150,3 +150,23 @@ func (t *HealthTracker) Replace(endpoints []url.URL) error {
 	t.order = endpointsClone
 	return nil
 }
+
+// Targets returns an ordered snapshot of unique tracked endpoints, including
+// endpoints that are currently unhealthy.
+func (t *HealthTracker) Targets() []url.URL {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	distinctEndpoints := make([]url.URL, 0, len(t.order))
+	seen := make(map[string]struct{})
+	for _, endpoint := range t.order {
+		key := endpoint.String()
+
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		distinctEndpoints = append(distinctEndpoints, endpoint)
+	}
+	return distinctEndpoints
+}
