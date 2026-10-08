@@ -707,3 +707,82 @@ func TestUpstreamFromConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestActiveHealthCheckPolicyFromConfig(t *testing.T) {
+	t.Parallel()
+
+	if got := activeHealthCheckPolicyFromConfig(nil); got != nil {
+		t.Errorf("activeHealthCheckPolicyFromConfig(nil) = %#v, want nil", got)
+	}
+
+	cfg := &config.ActiveHealthCheckConfig{
+		Path:                "/healthz",
+		Interval:            10 * time.Second,
+		Timeout:             2 * time.Second,
+		HealthyThreshold:    2,
+		UnhealthyThreshold:  3,
+		MaxConcurrentProbes: 4,
+	}
+	want := &router.ActiveHealthCheckPolicy{
+		Path:                "/healthz",
+		Interval:            10 * time.Second,
+		Timeout:             2 * time.Second,
+		HealthyThreshold:    2,
+		UnhealthyThreshold:  3,
+		MaxConcurrentProbes: 4,
+	}
+
+	got := activeHealthCheckPolicyFromConfig(cfg)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("activeHealthCheckPolicyFromConfig() = %+v, want %+v", got, want)
+	}
+	if got == nil {
+		t.Fatal("activeHealthCheckPolicyFromConfig() = nil, want non-nil")
+	}
+	got.Path = "/mutated"
+	if cfg.Path != "/healthz" {
+		t.Errorf("mutating mapped policy changed config path to %q", cfg.Path)
+	}
+}
+
+func TestUpstreamFromConfigMapsActiveHealthCheck(t *testing.T) {
+	t.Parallel()
+
+	upstreamConfig := &config.UpstreamConfig{
+		LoadBalancing: config.LoadBalancingPolicyRoundRobin,
+		Discovery: &config.UpstreamDiscoveryConfig{
+			Static: &config.StaticUpstreamDiscoveryConfig{
+				Endpoints: []config.UpstreamEndpointConfig{
+					{URL: "http://server-1:8080"},
+				},
+			},
+		},
+	}
+	upstreamConfig.ActiveHealthCheck = &config.ActiveHealthCheckConfig{
+		Path:                "/healthz",
+		Interval:            10 * time.Second,
+		Timeout:             2 * time.Second,
+		HealthyThreshold:    2,
+		UnhealthyThreshold:  3,
+		MaxConcurrentProbes: 4,
+	}
+
+	got, err := upstreamFromConfig(config.RouteConfig{
+		Name:     "users",
+		Upstream: upstreamConfig,
+	})
+	if err != nil {
+		t.Fatalf("upstreamFromConfig() error = %v", err)
+	}
+	want := &router.ActiveHealthCheckPolicy{
+		Path:                "/healthz",
+		Interval:            10 * time.Second,
+		Timeout:             2 * time.Second,
+		HealthyThreshold:    2,
+		UnhealthyThreshold:  3,
+		MaxConcurrentProbes: 4,
+	}
+	if !reflect.DeepEqual(got.ActiveHealthCheck, want) {
+		t.Errorf("active health check = %+v, want %+v", got.ActiveHealthCheck, want)
+	}
+}

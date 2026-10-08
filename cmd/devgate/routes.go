@@ -157,10 +157,30 @@ func upstreamFromConfig(routeConfig config.RouteConfig) (*router.Upstream, error
 			}
 			routeUpstream.Endpoints[i] = *parsedEndpoint
 		}
+		activeHealthCheck := activeHealthCheckPolicyFromConfig(
+			routeConfig.Upstream.ActiveHealthCheck,
+		)
+		routeUpstream.ActiveHealthCheck = activeHealthCheck
 		return routeUpstream, nil
 	}
 
 	return nil, nil
+}
+
+func activeHealthCheckPolicyFromConfig(
+	cfg *config.ActiveHealthCheckConfig,
+) *router.ActiveHealthCheckPolicy {
+	if cfg == nil {
+		return nil
+	}
+	return &router.ActiveHealthCheckPolicy{
+		Path:                cfg.Path,
+		Interval:            cfg.Interval,
+		Timeout:             cfg.Timeout,
+		HealthyThreshold:    cfg.HealthyThreshold,
+		UnhealthyThreshold:  cfg.UnhealthyThreshold,
+		MaxConcurrentProbes: cfg.MaxConcurrentProbes,
+	}
 }
 
 func errorResponsesFromConfig(configErrorResponses map[int]config.ErrorResponseConfig) map[int]router.ErrorResponse {

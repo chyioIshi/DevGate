@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUpstreamValidate(t *testing.T) {
@@ -121,6 +122,125 @@ func TestUpstreamValidate(t *testing.T) {
 	}
 }
 
+func TestActiveHealthCheckPolicyValidate(t *testing.T) {
+	t.Parallel()
+
+	valid := ActiveHealthCheckPolicy{
+		Path:                "/healthz",
+		Interval:            10 * time.Second,
+		Timeout:             2 * time.Second,
+		HealthyThreshold:    2,
+		UnhealthyThreshold:  3,
+		MaxConcurrentProbes: 4,
+	}
+	tests := []struct {
+		name        string
+		mutate      func(*ActiveHealthCheckPolicy)
+		wantMessage string
+	}{
+		{name: "valid policy"},
+		{
+			name:        "empty path",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Path = "" },
+			wantMessage: "path",
+		},
+		{
+			name:        "blank path",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Path = "   " },
+			wantMessage: "path",
+		},
+		{
+			name:        "relative path",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Path = "healthz" },
+			wantMessage: "start with",
+		},
+		{
+			name:        "path with query",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Path = "/healthz?ready=true" },
+			wantMessage: "reserved characters",
+		},
+		{
+			name:        "path with fragment",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Path = "/healthz#ready" },
+			wantMessage: "reserved characters",
+		},
+		{
+			name:        "zero interval",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Interval = 0 },
+			wantMessage: "interval",
+		},
+		{
+			name:        "negative interval",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Interval = -time.Second },
+			wantMessage: "interval",
+		},
+		{
+			name:        "zero timeout",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Timeout = 0 },
+			wantMessage: "timeout",
+		},
+		{
+			name:        "negative timeout",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.Timeout = -time.Second },
+			wantMessage: "timeout",
+		},
+		{
+			name:        "zero healthy threshold",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.HealthyThreshold = 0 },
+			wantMessage: "healthy threshold",
+		},
+		{
+			name:        "negative healthy threshold",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.HealthyThreshold = -1 },
+			wantMessage: "healthy threshold",
+		},
+		{
+			name:        "zero unhealthy threshold",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.UnhealthyThreshold = 0 },
+			wantMessage: "unhealthy threshold",
+		},
+		{
+			name:        "negative unhealthy threshold",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.UnhealthyThreshold = -1 },
+			wantMessage: "unhealthy threshold",
+		},
+		{
+			name:        "zero max concurrent probes",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.MaxConcurrentProbes = 0 },
+			wantMessage: "max concurrent probes",
+		},
+		{
+			name:        "negative max concurrent probes",
+			mutate:      func(p *ActiveHealthCheckPolicy) { p.MaxConcurrentProbes = -1 },
+			wantMessage: "max concurrent probes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			policy := valid
+			if tt.mutate != nil {
+				tt.mutate(&policy)
+			}
+			err := policy.validate()
+			if tt.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validate() error = nil, want error containing %q", tt.wantMessage)
+			}
+			if !strings.Contains(err.Error(), tt.wantMessage) {
+				t.Errorf("validate() error = %q, want it to contain %q", err, tt.wantMessage)
+			}
+		})
+	}
+}
+
 func TestNewValidatesUpstreamAction(t *testing.T) {
 	t.Parallel()
 
@@ -173,6 +293,22 @@ func TestNewValidatesUpstreamAction(t *testing.T) {
 				},
 			},
 			wantMessage: "upstream validation: at least one upstream endpoint",
+		},
+		{
+			name: "invalid active health check",
+			route: Route{
+				Name:       "users",
+				Protocol:   ProtocolHTTP,
+				PathPrefix: "/users",
+				Upstream: &Upstream{
+					LoadBalancing: LoadBalancingPolicyRoundRobin,
+					Endpoints: []url.URL{
+						*mustParseURL(t, "http://server-1:8080"),
+					},
+					ActiveHealthCheck: &ActiveHealthCheckPolicy{},
+				},
+			},
+			wantMessage: "upstream validation: active health check validation: path",
 		},
 	}
 
