@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -25,7 +24,7 @@ const (
 )
 
 func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
-	transport := &http.Transport{}
+	transport := &countingRoundTripper{}
 	routes := []router.Route{
 		{
 			Name:       "users",
@@ -58,7 +57,6 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 		t.Fatalf("handlersFromRoutes() handlers length = %d, want %d", len(handlers), len(routes))
 	}
 
-	transports := make(map[string]http.RoundTripper, len(routes))
 	for _, route := range routes {
 		handler, exists := handlers[route.Name]
 		if !exists {
@@ -69,26 +67,20 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 			t.Errorf("handler for route %q is nil", route.Name)
 			continue
 		}
-		reverseProxy, ok := handler.(*httputil.ReverseProxy)
-		if !ok {
-			t.Errorf("handler for route %q has type %T, want *httputil.ReverseProxy", route.Name, handler)
-			continue
-		}
-		transports[route.Name] = reverseProxy.Transport
-
 		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
-		proxyRequest := &httputil.ProxyRequest{
-			In:  request,
-			Out: request.Clone(request.Context()),
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNoContent {
+			t.Errorf("handler for route %q status = %d, want %d", route.Name, recorder.Code, http.StatusNoContent)
 		}
-		reverseProxy.Rewrite(proxyRequest)
 		target := route.Upstream.Endpoints[0]
-		if proxyRequest.Out.URL.Scheme != target.Scheme ||
-			proxyRequest.Out.URL.Host != target.Host {
+		outgoingRequest := transport.requests[len(transport.requests)-1]
+		if outgoingRequest.URL.Scheme != target.Scheme ||
+			outgoingRequest.URL.Host != target.Host {
 			t.Errorf(
 				"handler for route %q target = %q, want %q",
 				route.Name,
-				proxyRequest.Out.URL,
+				outgoingRequest.URL,
 				&target,
 			)
 		}
@@ -96,9 +88,6 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 
 	if handlers["users"] == handlers["fallback"] {
 		t.Error("different routes share the same handler")
-	}
-	if transports["users"] == transports["fallback"] {
-		t.Error("different routes share the same transport chain")
 	}
 }
 
@@ -118,9 +107,10 @@ func TestHandlersFromRoutesCreatesRoundRobinHandler(t *testing.T) {
 		},
 	}
 
+	transport := &countingRoundTripper{}
 	handlers, err := handlersFromRoutes(
 		[]router.Route{route},
-		&countingRoundTripper{},
+		transport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
@@ -131,13 +121,9 @@ func TestHandlersFromRoutesCreatesRoundRobinHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	reverseProxy, ok := handlers[route.Name].(*httputil.ReverseProxy)
-	if !ok {
-		t.Fatalf(
-			"handler for route %q has type %T, want *httputil.ReverseProxy",
-			route.Name,
-			handlers[route.Name],
-		)
+	handler := handlers[route.Name]
+	if handler == nil {
+		t.Fatalf("handler for route %q is nil", route.Name)
 	}
 
 	wantTargets := []string{
@@ -147,12 +133,8 @@ func TestHandlersFromRoutesCreatesRoundRobinHandler(t *testing.T) {
 	}
 	for i, want := range wantTargets {
 		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
-		proxyRequest := &httputil.ProxyRequest{
-			In:  request,
-			Out: request.Clone(request.Context()),
-		}
-		reverseProxy.Rewrite(proxyRequest)
-		if got := proxyRequest.Out.URL.String(); got != want {
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+		if got := transport.requests[i].URL.String(); got != want {
 			t.Errorf("request %d target = %q, want %q", i, got, want)
 		}
 	}
@@ -174,9 +156,10 @@ func TestHandlersFromRoutesCreatesRandomHandler(t *testing.T) {
 		},
 	}
 
+	transport := &countingRoundTripper{}
 	handlers, err := handlersFromRoutes(
 		[]router.Route{route},
-		&countingRoundTripper{},
+		transport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
@@ -187,13 +170,9 @@ func TestHandlersFromRoutesCreatesRandomHandler(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
-	reverseProxy, ok := handlers[route.Name].(*httputil.ReverseProxy)
-	if !ok {
-		t.Fatalf(
-			"handler for route %q has type %T, want *httputil.ReverseProxy",
-			route.Name,
-			handlers[route.Name],
-		)
+	handler := handlers[route.Name]
+	if handler == nil {
+		t.Fatalf("handler for route %q is nil", route.Name)
 	}
 
 	wantTargets := map[string]struct{}{
@@ -202,12 +181,8 @@ func TestHandlersFromRoutesCreatesRandomHandler(t *testing.T) {
 	}
 	for i := range 100 {
 		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/request", nil)
-		proxyRequest := &httputil.ProxyRequest{
-			In:  request,
-			Out: request.Clone(request.Context()),
-		}
-		reverseProxy.Rewrite(proxyRequest)
-		got := proxyRequest.Out.URL.String()
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+		got := transport.requests[i].URL.String()
 		if _, exists := wantTargets[got]; !exists {
 			t.Fatalf("request %d target = %q, want a configured endpoint", i, got)
 		}
@@ -618,6 +593,12 @@ func TestHandlersFromRoutesRejectsInvalidRouteActions(t *testing.T) {
 }
 
 func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
+	transport := &countingRoundTripper{
+		responseHeader: http.Header{
+			"X-Gateway-Response":       []string{"upstream-controlled"},
+			"X-Legacy-Response-Header": []string{"legacy"},
+		},
+	}
 	routes := []router.Route{
 		{
 			Name:       "users",
@@ -637,7 +618,7 @@ func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 
 	handlers, err := handlersFromRoutes(
 		routes,
-		&http.Transport{},
+		transport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
@@ -649,34 +630,28 @@ func TestHandlersFromRoutesAppliesHeaderPolicies(t *testing.T) {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
 
-	reverseProxy, ok := handlers["users"].(*httputil.ReverseProxy)
-	if !ok {
-		t.Fatalf("handler type = %T, want *httputil.ReverseProxy", handlers["users"])
+	handler := handlers["users"]
+	if handler == nil {
+		t.Fatal("handler for route users is nil")
 	}
 	in := httptest.NewRequest(http.MethodGet, "http://gateway.local/api/users", nil)
 	in.Header.Set("X-Gateway", "client-controlled")
 	in.Header.Set("X-Legacy-Header", "legacy")
-	out := in.Clone(in.Context())
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, in)
+	outHeader := transport.requests[0].Header
 
-	reverseProxy.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
-
-	if got := out.Header.Values("X-Gateway"); len(got) != 1 || got[0] != "DevGate" {
+	if got := outHeader.Values("X-Gateway"); len(got) != 1 || got[0] != "DevGate" {
 		t.Errorf("outgoing X-Gateway values = %q, want %q", got, []string{"DevGate"})
 	}
-	if got := out.Header.Values("X-Legacy-Header"); len(got) != 0 {
+	if got := outHeader.Values("X-Legacy-Header"); len(got) != 0 {
 		t.Errorf("outgoing X-Legacy-Header values = %q, want none", got)
 	}
 
-	response := &http.Response{Header: make(http.Header)}
-	response.Header.Set("X-Gateway-Response", "upstream-controlled")
-	response.Header.Set("X-Legacy-Response-Header", "legacy")
-	if err := reverseProxy.ModifyResponse(response); err != nil {
-		t.Fatalf("ModifyResponse() error = %v", err)
-	}
-	if got := response.Header.Values("X-Gateway-Response"); len(got) != 1 || got[0] != "DevGate" {
+	if got := recorder.Header().Values("X-Gateway-Response"); len(got) != 1 || got[0] != "DevGate" {
 		t.Errorf("response X-Gateway-Response values = %q, want %q", got, []string{"DevGate"})
 	}
-	if got := response.Header.Values("X-Legacy-Response-Header"); len(got) != 0 {
+	if got := recorder.Header().Values("X-Legacy-Response-Header"); len(got) != 0 {
 		t.Errorf("response X-Legacy-Response-Header values = %q, want none", got)
 	}
 }
@@ -691,9 +666,10 @@ func TestHandlersFromRoutesPassesTrustedProxyCIDRsToReverseProxy(t *testing.T) {
 		},
 	}
 
+	transport := &countingRoundTripper{}
 	handlers, err := handlersFromRoutes(
 		routes,
-		http.DefaultTransport,
+		transport,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
@@ -705,19 +681,17 @@ func TestHandlersFromRoutesPassesTrustedProxyCIDRsToReverseProxy(t *testing.T) {
 		t.Fatalf("handlersFromRoutes() error = %v", err)
 	}
 
-	reverseProxy, ok := handlers["users"].(*httputil.ReverseProxy)
-	if !ok {
-		t.Fatalf("handler type = %T, want *httputil.ReverseProxy", handlers["users"])
+	handler := handlers["users"]
+	if handler == nil {
+		t.Fatal("handler for route users is nil")
 	}
 	in := httptest.NewRequest(http.MethodGet, "http://gateway.local/api/users", nil)
 	in.RemoteAddr = "10.0.0.2:1234"
 	in.Header.Set("X-Forwarded-For", "203.0.113.10")
-	out := in.Clone(in.Context())
-
-	reverseProxy.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+	handler.ServeHTTP(httptest.NewRecorder(), in)
 
 	const want = "203.0.113.10, 10.0.0.2"
-	if got := out.Header.Get("X-Forwarded-For"); got != want {
+	if got := transport.requests[0].Header.Get("X-Forwarded-For"); got != want {
 		t.Errorf("outgoing X-Forwarded-For = %q, want %q", got, want)
 	}
 }
@@ -1243,7 +1217,9 @@ func TestHandlersFromRoutesRejectsNegativeRequestBodyLimit(t *testing.T) {
 }
 
 type countingRoundTripper struct {
-	calls int
+	calls          int
+	requests       []*http.Request
+	responseHeader http.Header
 }
 
 type errorRoundTripper struct {
@@ -1296,9 +1272,10 @@ func (t *contextBlockingRoundTripper) RoundTrip(request *http.Request) (*http.Re
 
 func (t *countingRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.calls++
+	t.requests = append(t.requests, request.Clone(request.Context()))
 	return &http.Response{
 		StatusCode: http.StatusNoContent,
-		Header:     make(http.Header),
+		Header:     t.responseHeader.Clone(),
 		Body:       http.NoBody,
 		Request:    request,
 	}, nil
