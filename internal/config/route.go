@@ -80,8 +80,9 @@ type HeaderMatchConfig struct {
 // UpstreamConfig configures endpoint discovery and load balancing for an
 // upstream route.
 type UpstreamConfig struct {
-	LoadBalancing LoadBalancingPolicy      `yaml:"load_balancing"`
-	Discovery     *UpstreamDiscoveryConfig `yaml:"discovery"`
+	LoadBalancing     LoadBalancingPolicy      `yaml:"load_balancing"`
+	Discovery         *UpstreamDiscoveryConfig `yaml:"discovery"`
+	ActiveHealthCheck *ActiveHealthCheckConfig `yaml:"active_health_check"`
 }
 
 // UpstreamDiscoveryConfig selects one source of upstream endpoints.
@@ -99,6 +100,17 @@ type StaticUpstreamDiscoveryConfig struct {
 // endpoint.
 type UpstreamEndpointConfig struct {
 	URL string `yaml:"url"`
+}
+
+// ActiveHealthCheckConfig configures periodic HTTP probes for one upstream
+// pool.
+type ActiveHealthCheckConfig struct {
+	Path                string        `yaml:"path"`
+	Interval            time.Duration `yaml:"interval"`
+	Timeout             time.Duration `yaml:"timeout"`
+	HealthyThreshold    int           `yaml:"healthy_threshold"`
+	UnhealthyThreshold  int           `yaml:"unhealthy_threshold"`
+	MaxConcurrentProbes int           `yaml:"max_concurrent_probes"`
 }
 
 type fileConfig struct {
