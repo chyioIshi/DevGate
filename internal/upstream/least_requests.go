@@ -26,7 +26,7 @@ func NewLeastRequests(endpoints []url.URL) (*LeastRequests, error) {
 
 // Acquire returns the least-loaded endpoint and an idempotent function that
 // releases its active-request permit.
-func (l *LeastRequests) Acquire() (url.URL, func()) {
+func (l *LeastRequests) Acquire() (url.URL, func(), error) {
 	l.mu.Lock()
 
 	start := l.cursor % len(l.endpoints)
@@ -58,7 +58,7 @@ func (l *LeastRequests) Acquire() (url.URL, func()) {
 		selected.activeRequests--
 	}
 
-	return target, release
+	return target, release, nil
 }
 
 // Replace atomically publishes a non-empty endpoint snapshot while preserving

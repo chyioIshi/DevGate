@@ -24,10 +24,10 @@ func NewRoundRobin(endpoints []url.URL) (*RoundRobin, error) {
 }
 
 // Acquire returns the next endpoint and its release function.
-func (r *RoundRobin) Acquire() (url.URL, func()) {
+func (r *RoundRobin) Acquire() (url.URL, func(), error) {
 	idx := r.next.Add(1) - 1
 	snapshot := r.snapshot.Load()
-	return snapshot.endpoints[idx%uint64(len(snapshot.endpoints))], func() {}
+	return snapshot.endpoints[idx%uint64(len(snapshot.endpoints))], func() {}, nil
 }
 
 // Replace atomically publishes a copied, non-empty snapshot of endpoints.

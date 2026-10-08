@@ -24,10 +24,10 @@ func NewRandom(endpoints []url.URL) (*Random, error) {
 }
 
 // Acquire returns a randomly selected endpoint and its release function.
-func (r *Random) Acquire() (url.URL, func()) {
+func (r *Random) Acquire() (url.URL, func(), error) {
 	snapshot := r.snapshot.Load()
 	idx := rand.IntN(len(snapshot.endpoints))
-	return snapshot.endpoints[idx], func() {}
+	return snapshot.endpoints[idx], func() {}, nil
 }
 
 // Replace atomically publishes a copied, non-empty snapshot of endpoints.
