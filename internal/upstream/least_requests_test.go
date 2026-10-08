@@ -33,7 +33,7 @@ func TestLeastRequestsRotatesEqualEndpoints(t *testing.T) {
 		"three.example",
 		"one.example",
 	} {
-		target, release := picker.Acquire()
+		target, release, _ := picker.Acquire()
 		if target.Host != want {
 			t.Errorf("Acquire() call %d host = %q, want %q", i+1, target.Host, want)
 		}
@@ -48,12 +48,12 @@ func TestLeastRequestsSelectsEndpointWithFewestActiveRequests(t *testing.T) {
 		url.URL{Scheme: "http", Host: "three.example"},
 	)
 
-	_, releaseOne := picker.Acquire()
-	_, releaseTwo := picker.Acquire()
-	_, releaseThree := picker.Acquire()
+	_, releaseOne, _ := picker.Acquire()
+	_, releaseTwo, _ := picker.Acquire()
+	_, releaseThree, _ := picker.Acquire()
 	releaseTwo()
 
-	target, release := picker.Acquire()
+	target, release, _ := picker.Acquire()
 	if target.Host != "two.example" {
 		t.Errorf("Acquire() host = %q, want least-loaded host %q", target.Host, "two.example")
 	}
@@ -69,14 +69,14 @@ func TestLeastRequestsReleaseIsIdempotent(t *testing.T) {
 		url.URL{Scheme: "http", Host: "two.example"},
 	)
 
-	_, releaseOne := picker.Acquire()
+	_, releaseOne, _ := picker.Acquire()
 	releaseOne()
 	releaseOne()
 
-	_, releaseTwo := picker.Acquire()
+	_, releaseTwo, _ := picker.Acquire()
 	releaseTwo()
 
-	target, release := picker.Acquire()
+	target, release, _ := picker.Acquire()
 	if target.Host != "one.example" {
 		t.Errorf("Acquire() host after repeated release = %q, want %q", target.Host, "one.example")
 	}
@@ -88,18 +88,18 @@ func TestLeastRequestsReplacePreservesActiveRequests(t *testing.T) {
 	two := url.URL{Scheme: "http", Host: "two.example"}
 	picker := newLeastRequests(t, one, two)
 
-	_, releaseOne := picker.Acquire()
+	_, releaseOne, _ := picker.Acquire()
 	if err := picker.Replace([]url.URL{one, two}); err != nil {
 		t.Fatalf("Replace() error = %v", err)
 	}
 
-	target, releaseTwo := picker.Acquire()
+	target, releaseTwo, _ := picker.Acquire()
 	if target.Host != "two.example" {
 		t.Fatalf("Acquire() host after Replace() = %q, want %q", target.Host, "two.example")
 	}
 	releaseTwo()
 
-	target, release := picker.Acquire()
+	target, release, _ := picker.Acquire()
 	if target.Host != "two.example" {
 		t.Errorf("Acquire() host = %q, want preserved least-loaded host %q", target.Host, "two.example")
 	}
@@ -113,14 +113,14 @@ func TestLeastRequestsRemovedEndpointCanStillBeReleased(t *testing.T) {
 	two := url.URL{Scheme: "http", Host: "two.example"}
 	picker := newLeastRequests(t, one, two)
 
-	_, releaseRemoved := picker.Acquire()
+	_, releaseRemoved, _ := picker.Acquire()
 	if err := picker.Replace([]url.URL{two}); err != nil {
 		t.Fatalf("Replace() error = %v", err)
 	}
 	releaseRemoved()
 	releaseRemoved()
 
-	target, release := picker.Acquire()
+	target, release, _ := picker.Acquire()
 	if target.Host != "two.example" {
 		t.Errorf("Acquire() host = %q, want remaining host %q", target.Host, "two.example")
 	}
@@ -134,7 +134,7 @@ func TestLeastRequestsReplaceRejectsEmptySnapshotAndKeepsCurrent(t *testing.T) {
 		if err := picker.Replace(endpoints); err == nil {
 			t.Error("Replace() error = nil, want non-nil")
 		}
-		target, release := picker.Acquire()
+		target, release, _ := picker.Acquire()
 		if target.Host != "current.example" {
 			t.Errorf("Acquire() host after rejected Replace() = %q, want %q", target.Host, "current.example")
 		}
@@ -159,7 +159,7 @@ func TestLeastRequestsAcquireAndReplaceAreSafeForConcurrentUse(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			for range 500 {
-				_, release := picker.Acquire()
+				_, release, _ := picker.Acquire()
 				release()
 			}
 		}()

@@ -14,7 +14,7 @@ func BenchmarkRoundRobinAcquire(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_, release := picker.Acquire()
+		_, release, _ := picker.Acquire()
 		release()
 	}
 }
@@ -26,7 +26,7 @@ func BenchmarkRoundRobinAcquireParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, release := picker.Acquire()
+			_, release, _ := picker.Acquire()
 			release()
 		}
 	})

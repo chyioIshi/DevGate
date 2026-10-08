@@ -37,12 +37,38 @@ type staticTestTargetPicker struct {
 	target url.URL
 }
 
-func (p staticTestTargetPicker) Acquire() (url.URL, func()) {
-	return p.target, func() {}
+func (p staticTestTargetPicker) Acquire() (url.URL, func(), error) {
+	return p.target, func() {}, nil
+}
+
+type errorTestTargetPicker struct {
+	err error
+}
+
+func (p errorTestTargetPicker) Acquire() (url.URL, func(), error) {
+	return url.URL{}, nil, p.err
 }
 
 func testTargetPicker(targetURL *url.URL) TargetPicker {
 	return staticTestTargetPicker{target: *targetURL}
+}
+
+func rewriteProxyRequest(t *testing.T, handler *Handler, request *httputil.ProxyRequest) {
+	t.Helper()
+
+	target, release, err := handler.targetPicker.Acquire()
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	defer release()
+
+	ctx := context.WithValue(
+		request.In.Context(),
+		acquiredTargetContextKey{},
+		acquiredTarget{target: target, release: release},
+	)
+	request.In = request.In.WithContext(ctx)
+	handler.reverseProxy.Rewrite(request)
 }
 
 func TestReverseProxySelectsTargetForEachRequest(t *testing.T) {
@@ -665,7 +691,7 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 	out := in.Clone(in.Context())
 	proxyRequest := &httputil.ProxyRequest{In: in, Out: out}
 
-	reverseProxy.Rewrite(proxyRequest)
+	rewriteProxyRequest(t, reverseProxy, proxyRequest)
 
 	if got := out.Header.Values("X-Replace"); len(got) != 1 || got[0] != "replacement" {
 		t.Errorf("outgoing X-Replace values = %q, want %q", got, []string{"replacement"})
@@ -710,7 +736,7 @@ func TestReverseProxyClonesTrustedProxyCIDRs(t *testing.T) {
 	in.Header.Set("X-Forwarded-For", "203.0.113.10")
 	out := in.Clone(in.Context())
 
-	reverseProxy.Rewrite(&httputil.ProxyRequest{In: in, Out: out})
+	rewriteProxyRequest(t, reverseProxy, &httputil.ProxyRequest{In: in, Out: out})
 
 	const want = "203.0.113.10, 10.0.0.2"
 	if got := out.Header.Get("X-Forwarded-For"); got != want {
@@ -827,7 +853,7 @@ func TestReverseProxyDelegatesGatewayErrorToResponder(t *testing.T) {
 	)
 	recorder := httptest.NewRecorder()
 
-	reverseProxy.ErrorHandler(recorder, request, errors.New("upstream unavailable"))
+	reverseProxy.reverseProxy.ErrorHandler(recorder, request, errors.New("upstream unavailable"))
 
 	if calls != 1 {
 		t.Errorf("error responder calls = %d, want 1", calls)
@@ -868,6 +894,16 @@ func TestStatusCodeForProxyError(t *testing.T) {
 		{
 			name: "wrapped open circuit",
 			err:  fmt.Errorf("round trip: %w", ErrCircuitOpen),
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "no available upstream",
+			err:  ErrNoAvailableUpstream,
+			want: http.StatusServiceUnavailable,
+		},
+		{
+			name: "wrapped no available upstream",
+			err:  fmt.Errorf("select target: %w", ErrNoAvailableUpstream),
 			want: http.StatusServiceUnavailable,
 		},
 		{
@@ -974,6 +1010,43 @@ func TestReverseProxyReturnsServiceUnavailableWhenCircuitIsOpen(t *testing.T) {
 	}
 	if base.calls != 1 {
 		t.Errorf("base RoundTrip() calls = %d, want 1", base.calls)
+	}
+}
+
+func TestHandlerReturnsServiceUnavailableWhenNoUpstreamIsAvailable(t *testing.T) {
+	transport := &recordingRoundTripper{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       http.NoBody,
+		},
+	}
+	handler := New(
+		errorTestTargetPicker{err: ErrNoAvailableUpstream},
+		transport,
+		nil,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.DiscardHandler),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf(
+			"response status = %d, want %d",
+			recorder.Code,
+			http.StatusServiceUnavailable,
+		)
+	}
+	if got, want := recorder.Body.String(), "Service Unavailable\n"; got != want {
+		t.Errorf("response body = %q, want %q", got, want)
+	}
+	if transport.calls != 0 {
+		t.Errorf("RoundTrip() calls = %d, want 0", transport.calls)
 	}
 }
 
