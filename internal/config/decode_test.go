@@ -262,6 +262,56 @@ routes:
 	}
 }
 
+func TestDecodeConfigActiveHealthCheck(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /users
+    upstream:
+      load_balancing: round_robin
+      discovery:
+        static:
+          endpoints:
+            - url: http://users-1:8080
+            - url: http://users-2:8080
+      active_health_check:
+        path: /healthz
+        interval: 10s
+        timeout: 2s
+        healthy_threshold: 2
+        unhealthy_threshold: 3
+        max_concurrent_probes: 4
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+	if len(got.Routes) != 1 {
+		t.Fatalf("decodeConfig() route count = %d, want 1", len(got.Routes))
+	}
+	if got.Routes[0].Upstream == nil {
+		t.Fatal("decodeConfig() upstream = nil, want non-nil")
+	}
+
+	healthCheck := got.Routes[0].Upstream.ActiveHealthCheck
+	if healthCheck == nil {
+		t.Fatal("decodeConfig() active health check = nil, want non-nil")
+	}
+	want := ActiveHealthCheckConfig{
+		Path:                "/healthz",
+		Interval:            10 * time.Second,
+		Timeout:             2 * time.Second,
+		HealthyThreshold:    2,
+		UnhealthyThreshold:  3,
+		MaxConcurrentProbes: 4,
+	}
+	if !reflect.DeepEqual(*healthCheck, want) {
+		t.Errorf("decodeConfig() active health check = %+v, want %+v", *healthCheck, want)
+	}
+}
+
 func TestDecodeConfigRejectsUnknownUpstreamFields(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -303,6 +353,15 @@ func TestDecodeConfigRejectsUnknownUpstreamFields(t *testing.T) {
               unknown_endpoint: value`,
 			unknownField: "unknown_endpoint",
 		},
+		{
+			name: "active health check",
+			upstreamYAML: `
+      load_balancing: round_robin
+      active_health_check:
+        path: /healthz
+        unknown_health_check: value`,
+			unknownField: "unknown_health_check",
+		},
 	}
 
 	for _, test := range tests {
@@ -330,6 +389,56 @@ routes:
 					err,
 					test.unknownField,
 				)
+			}
+		})
+	}
+}
+
+func TestDecodeConfigRejectsInvalidActiveHealthCheckDuration(t *testing.T) {
+	tests := []struct {
+		name        string
+		validLine   string
+		invalidLine string
+	}{
+		{
+			name:        "interval",
+			validLine:   "interval: 10s",
+			invalidLine: "interval: fast",
+		},
+		{
+			name:        "timeout",
+			validLine:   "timeout: 2s",
+			invalidLine: "timeout: fast",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /users
+    upstream:
+      active_health_check:
+        path: /healthz
+        interval: 10s
+        timeout: 2s
+        healthy_threshold: 2
+        unhealthy_threshold: 3
+        max_concurrent_probes: 4
+`
+			input = strings.Replace(input, tt.validLine, tt.invalidLine, 1)
+
+			got, err := decodeConfig(strings.NewReader(input))
+			if err == nil {
+				t.Fatal("decodeConfig() error = nil, want invalid duration error")
+			}
+			if got.Routes != nil {
+				t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+			}
+			if !strings.Contains(err.Error(), "invalid duration") {
+				t.Errorf("decodeConfig() error = %q, want invalid duration context", err)
 			}
 		})
 	}
