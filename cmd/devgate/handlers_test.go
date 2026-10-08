@@ -23,6 +23,33 @@ const (
 	testCircuitOpenTimeout      = time.Minute
 )
 
+func handlersFromRoutes(
+	routes []router.Route,
+	transport http.RoundTripper,
+	circuitFailureThreshold int,
+	circuitOpenTimeout time.Duration,
+	circuitBreakerMetrics *metrics.CircuitBreaker,
+	rateLimiterMetrics *metrics.RateLimiter,
+	trustedCIDRs []netip.Prefix,
+	logger *slog.Logger,
+) (map[string]http.Handler, error) {
+	runtime, err := routeRuntimeFromRoutes(
+		routes,
+		transport,
+		nil,
+		circuitFailureThreshold,
+		circuitOpenTimeout,
+		circuitBreakerMetrics,
+		rateLimiterMetrics,
+		trustedCIDRs,
+		logger,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.handlers, nil
+}
+
 func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	transport := &countingRoundTripper{}
 	routes := []router.Route{
@@ -88,6 +115,102 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 
 	if handlers["users"] == handlers["fallback"] {
 		t.Error("different routes share the same handler")
+	}
+}
+
+func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
+	t.Parallel()
+
+	activeUpstream := testRouteUpstream(t, "http://active.example")
+	activeUpstream.ActiveHealthCheck = &router.ActiveHealthCheckPolicy{
+		Path:                "/healthz",
+		Interval:            time.Minute,
+		Timeout:             time.Second,
+		HealthyThreshold:    1,
+		UnhealthyThreshold:  1,
+		MaxConcurrentProbes: 1,
+	}
+	routes := []router.Route{
+		{
+			Name:       "active",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/active",
+			Upstream:   activeUpstream,
+		},
+		{
+			Name:       "passive",
+			Protocol:   router.ProtocolHTTP,
+			PathPrefix: "/passive",
+			Upstream:   testRouteUpstream(t, "http://passive.example"),
+		},
+	}
+
+	runtime, err := routeRuntimeFromRoutes(
+		routes,
+		&countingRoundTripper{},
+		&http.Client{Transport: &countingRoundTripper{}},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	if got := len(runtime.handlers); got != len(routes) {
+		t.Errorf("handler count = %d, want %d", got, len(routes))
+	}
+	if got := len(runtime.healthCheckers); got != 1 {
+		t.Errorf("health checker count = %d, want 1", got)
+	}
+}
+
+func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) {
+	t.Parallel()
+
+	routeUpstream := testRouteUpstream(t, "http://active.example")
+	routeUpstream.ActiveHealthCheck = &router.ActiveHealthCheckPolicy{
+		Path:                "/healthz",
+		Interval:            time.Minute,
+		Timeout:             time.Second,
+		HealthyThreshold:    1,
+		UnhealthyThreshold:  1,
+		MaxConcurrentProbes: 1,
+	}
+	route := router.Route{
+		Name:       "active",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/active",
+		Upstream:   routeUpstream,
+	}
+
+	runtime, err := routeRuntimeFromRoutes(
+		[]router.Route{route},
+		&countingRoundTripper{},
+		nil,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err == nil {
+		t.Fatal("routeRuntimeFromRoutes() error = nil, want health-check client error")
+	}
+	if runtime != nil {
+		t.Errorf("routeRuntimeFromRoutes() runtime = %#v, want nil", runtime)
+	}
+	for _, context := range []string{
+		"active",
+		"create health checker",
+		"http client was not provided",
+	} {
+		if !strings.Contains(err.Error(), context) {
+			t.Errorf("routeRuntimeFromRoutes() error = %q, want context %q", err, context)
+		}
 	}
 }
 

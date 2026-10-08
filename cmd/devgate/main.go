@@ -59,6 +59,10 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	defer upstreamTransport.CloseIdleConnections()
 
+	healthCheckClient := &http.Client{
+		Transport: upstreamTransport,
+	}
+
 	retryTransport, err := proxy.NewRetryTransport(upstreamTransport, cfg.UpstreamMaxAttempts, cfg.UpstreamRetryBaseDelay)
 	if err != nil {
 		return fmt.Errorf("create upstream retry transport: %w", err)
@@ -69,9 +73,10 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	rateLimiterMetrics := metrics.NewRateLimiter(promRegistry)
 	httpMetrics := metrics.NewHTTP(promRegistry)
 
-	routeHandlers, err := handlersFromRoutes(
+	routeRuntime, err := routeRuntimeFromRoutes(
 		routes,
 		retryTransport,
+		healthCheckClient,
 		cfg.UpstreamCircuitFailureThreshold,
 		cfg.UpstreamCircuitOpenTimeout,
 		circuitBreakerMetrics,
@@ -85,7 +90,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	gatewayHandler := gateway.New(
 		routeRouter,
-		routeHandlers,
+		routeRuntime.handlers,
 		globalErrorResponder.Write,
 		logger,
 		httpMetrics,
@@ -108,6 +113,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		IdleTimeout:       cfg.IdleTimeout,
 	}
+	stopHealthChecks := routeRuntime.startHealthChecks(ctx)
+	defer stopHealthChecks()
 
 	return serve(ctx, server, logger, cfg.ShutdownTimeout)
 }

@@ -1022,7 +1022,7 @@ func TestHandlerReturnsServiceUnavailableWhenNoUpstreamIsAvailable(t *testing.T)
 		},
 	}
 	handler := New(
-		errorTestTargetPicker{err: ErrNoAvailableUpstream},
+		errorTestTargetPicker{err: errors.New("no healthy endpoints")},
 		transport,
 		nil,
 		nil,
