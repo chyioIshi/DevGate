@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"sync"
 	"time"
 
 	"github.com/chyioishi/devgate/internal/directresponse"
@@ -20,17 +23,50 @@ import (
 	"github.com/chyioishi/devgate/internal/upstream"
 )
 
-func handlersFromRoutes(
+type routeRuntime struct {
+	handlers       map[string]http.Handler
+	healthCheckers []healthCheckRunner
+}
+
+func (r *routeRuntime) startHealthChecks(ctx context.Context) func() {
+	healthCheckCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+
+	for _, healthChecker := range r.healthCheckers {
+		wg.Go(func() {
+			healthChecker.Run(healthCheckCtx)
+		})
+	}
+
+	return func() {
+		cancel()
+		wg.Wait()
+	}
+}
+
+type replaceableTargetPicker interface {
+	proxy.TargetPicker
+	Replace([]url.URL) error
+}
+
+type healthCheckRunner interface {
+	Run(context.Context)
+}
+
+func routeRuntimeFromRoutes(
 	routes []router.Route,
 	transport http.RoundTripper,
+	healthCheckClient *http.Client,
 	circuitFailureThreshold int,
 	circuitOpenTimeout time.Duration,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
 	trustedCIDRs []netip.Prefix,
 	logger *slog.Logger,
-) (map[string]http.Handler, error) {
-	handlers := make(map[string]http.Handler, len(routes))
+) (*routeRuntime, error) {
+	runtime := &routeRuntime{
+		handlers: make(map[string]http.Handler, len(routes)),
+	}
 
 	for _, route := range routes {
 		var responseHeaderTransform func(http.Header)
@@ -93,7 +129,7 @@ func handlersFromRoutes(
 					requestHeaderTransform = route.RequestHeaders.Apply
 				}
 
-				var targetPicker proxy.TargetPicker
+				var targetPicker replaceableTargetPicker
 				switch route.Upstream.LoadBalancing {
 				case router.LoadBalancingPolicyRoundRobin:
 					targetPicker, err = upstream.NewRoundRobin(route.Upstream.Endpoints)
@@ -129,8 +165,28 @@ func handlersFromRoutes(
 						route.Upstream.LoadBalancing,
 					)
 				}
-				routeHandler = proxy.New(
+
+				selectedTargetPicker,
+					healthChecker,
+					err := targetPickerWithActiveHealthCheck(
+					route.Name,
+					route.Upstream,
 					targetPicker,
+					healthCheckClient,
+					logger,
+				)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"configure active health check for route %q: %w",
+						route.Name,
+						err,
+					)
+				}
+				if healthChecker != nil {
+					runtime.healthCheckers = append(runtime.healthCheckers, healthChecker)
+				}
+				routeHandler = proxy.New(
+					selectedTargetPicker,
 					circuitBreakerTransport,
 					requestHeaderTransform,
 					responseHeaderTransform,
@@ -229,10 +285,64 @@ func handlersFromRoutes(
 				routeErrorResponder.Write,
 			)
 		}
-		handlers[route.Name] = routeHandler
+		runtime.handlers[route.Name] = routeHandler
 	}
 
-	return handlers, nil
+	return runtime, nil
+}
+
+func targetPickerWithActiveHealthCheck(
+	routeName string,
+	routeUpstream *router.Upstream,
+	basePicker replaceableTargetPicker,
+	client *http.Client,
+	logger *slog.Logger,
+) (proxy.TargetPicker, *upstream.HealthChecker, error) {
+	if routeUpstream.ActiveHealthCheck == nil {
+		return basePicker, nil, nil
+	}
+	routeUpstreamHealthTracker, err := upstream.NewHealthTracker(
+		routeUpstream.Endpoints,
+		routeUpstream.ActiveHealthCheck.HealthyThreshold,
+		routeUpstream.ActiveHealthCheck.UnhealthyThreshold,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"create health tracker: %w",
+			err,
+		)
+	}
+	healthAwarePicker, err := upstream.NewHealthAwarePicker(
+		basePicker,
+		routeUpstreamHealthTracker,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"create health-aware target picker: %w",
+			err,
+		)
+	}
+	healthCheckObserver := &routeHealthCheckObserver{
+		routeName: routeName,
+		picker:    healthAwarePicker,
+		logger:    logger,
+	}
+	routeHealthChecker, err := upstream.NewHealthChecker(
+		client,
+		routeUpstreamHealthTracker,
+		routeUpstream.ActiveHealthCheck.Interval,
+		routeUpstream.ActiveHealthCheck.Timeout,
+		routeUpstream.ActiveHealthCheck.Path,
+		routeUpstream.ActiveHealthCheck.MaxConcurrentProbes,
+		healthCheckObserver,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"create active health checker: %w",
+			err,
+		)
+	}
+	return healthAwarePicker, routeHealthChecker, nil
 }
 
 func errorResponsesFromRoute(routeErrorResponses map[int]router.ErrorResponse) map[int]errorresponse.Response {

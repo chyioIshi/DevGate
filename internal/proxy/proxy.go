@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -108,7 +109,12 @@ func New(
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	target, release, err := h.targetPicker.Acquire()
 	if err != nil {
-		handleProxyError(rw, req, err, h.errorResponder, h.logger)
+		selectionErr := fmt.Errorf(
+			"%w: target selection failed: %w",
+			ErrNoAvailableUpstream,
+			err,
+		)
+		handleProxyError(rw, req, selectionErr, h.errorResponder, h.logger)
 		return
 	}
 	defer release()

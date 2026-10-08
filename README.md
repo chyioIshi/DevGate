@@ -115,6 +115,41 @@ The legacy `upstream_url` field remains supported for single-endpoint routes.
 DevGate normalizes it internally to a round-robin pool containing one endpoint.
 `upstream` and `upstream_url` are mutually exclusive.
 
+## Active health checks
+
+An upstream pool can periodically probe every configured endpoint:
+
+```yaml
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream:
+      load_balancing: least_requests
+      discovery:
+        static:
+          endpoints:
+            - url: http://users-service-1:8080
+            - url: http://users-service-2:8080
+      active_health_check:
+        path: /healthz
+        interval: 10s
+        timeout: 2s
+        healthy_threshold: 2
+        unhealthy_threshold: 3
+        max_concurrent_probes: 4
+```
+
+DevGate sends `GET` probes directly to each endpoint, bypassing request retries
+and the route circuit breaker. A `2xx` response is successful; transport
+errors, timeouts, and other status codes are failures. Thresholds count
+consecutive outcomes before changing an endpoint's state.
+
+New endpoints start healthy. Once an endpoint becomes unhealthy, it is removed
+from load balancing until it reaches the healthy threshold again. If no healthy
+endpoint remains, DevGate fails closed with `503 Service Unavailable` without
+attempting a data-plane upstream request.
+
 ## Direct responses
 
 A route can return a static HTTP response without forwarding the request to an
