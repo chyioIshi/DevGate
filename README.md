@@ -150,6 +150,17 @@ from load balancing until it reaches the healthy threshold again. If no healthy
 endpoint remains, DevGate fails closed with `503 Service Unavailable` without
 attempting a data-plane upstream request.
 
+Active health checks export the following Prometheus metrics:
+
+- `devgate_active_health_check_probes_total{route,target,outcome}` counts probe
+  results; `outcome` is either `success` or `failure`;
+- `devgate_active_health_check_endpoint_healthy{route,target}` reports the
+  current endpoint state as `1` for healthy or `0` for unhealthy.
+
+Targets use redacted URLs so configured passwords are not exposed by the
+metrics endpoint. Error messages are intentionally excluded from labels to
+keep label cardinality bounded.
+
 ## Direct responses
 
 A route can return a static HTTP response without forwarding the request to an
