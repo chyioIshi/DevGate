@@ -29,10 +29,12 @@ func TestRouteHealthCheckObserverRefreshesPickerOnTransition(t *testing.T) {
 		t.Fatalf("NewHealthAwarePicker() error = %v", err)
 	}
 	var logs bytes.Buffer
+	metricsObserver := &recordingHealthCheckMetricsObserver{}
 	observer := &routeHealthCheckObserver{
-		routeName: "users",
-		picker:    picker,
-		logger:    slog.New(slog.NewJSONHandler(&logs, nil)),
+		routeName:       "users",
+		picker:          picker,
+		logger:          slog.New(slog.NewJSONHandler(&logs, nil)),
+		metricsObserver: metricsObserver,
 	}
 	tracker.RecordFailure(target)
 
@@ -44,6 +46,16 @@ func TestRouteHealthCheckObserverRefreshesPickerOnTransition(t *testing.T) {
 	}
 	if release != nil {
 		t.Error("Acquire() release is non-nil, want nil")
+	}
+	if len(metricsObserver.transitions) != 1 {
+		t.Fatalf(
+			"metrics transition count = %d, want 1",
+			len(metricsObserver.transitions),
+		)
+	}
+	transition := metricsObserver.transitions[0]
+	if transition.target != target || transition.healthy {
+		t.Errorf("metrics transition = %+v, want target %q unhealthy", transition, target.String())
 	}
 	records := decodeObserverLogs(t, logs.Bytes())
 	if len(records) != 1 {
@@ -70,10 +82,12 @@ func TestRouteHealthCheckObserverLogsRefreshFailure(t *testing.T) {
 	}
 	base.replaceErr = errors.New("replace failed")
 	var logs bytes.Buffer
+	metricsObserver := &recordingHealthCheckMetricsObserver{}
 	observer := &routeHealthCheckObserver{
-		routeName: "users",
-		picker:    picker,
-		logger:    slog.New(slog.NewJSONHandler(&logs, nil)),
+		routeName:       "users",
+		picker:          picker,
+		logger:          slog.New(slog.NewJSONHandler(&logs, nil)),
+		metricsObserver: metricsObserver,
 	}
 
 	observer.RecordStateTransition(target, true)
@@ -105,6 +119,63 @@ func TestRouteHealthCheckObserverLogsRefreshFailure(t *testing.T) {
 	if strings.Contains(logs.String(), "secret") {
 		t.Errorf("logs expose target password: %s", logs.String())
 	}
+}
+
+func TestRouteHealthCheckObserverDelegatesProbeResult(t *testing.T) {
+	t.Parallel()
+
+	target := mustParseObserverTarget(t, "http://upstream.example")
+	probeErr := errors.New("probe failed")
+	metricsObserver := &recordingHealthCheckMetricsObserver{}
+	observer := &routeHealthCheckObserver{metricsObserver: metricsObserver}
+
+	observer.RecordProbeResult(target, false, probeErr)
+
+	if len(metricsObserver.probes) != 1 {
+		t.Fatalf("metrics probe count = %d, want 1", len(metricsObserver.probes))
+	}
+	probe := metricsObserver.probes[0]
+	if probe.target != target || probe.successful || !errors.Is(probe.err, probeErr) {
+		t.Errorf("metrics probe = %+v, want target %q failed with %v", probe, target.String(), probeErr)
+	}
+}
+
+type recordedHealthCheckProbe struct {
+	target     url.URL
+	successful bool
+	err        error
+}
+
+type recordedHealthCheckTransition struct {
+	target  url.URL
+	healthy bool
+}
+
+type recordingHealthCheckMetricsObserver struct {
+	probes      []recordedHealthCheckProbe
+	transitions []recordedHealthCheckTransition
+}
+
+func (o *recordingHealthCheckMetricsObserver) RecordProbeResult(
+	target url.URL,
+	successful bool,
+	err error,
+) {
+	o.probes = append(o.probes, recordedHealthCheckProbe{
+		target:     target,
+		successful: successful,
+		err:        err,
+	})
+}
+
+func (o *recordingHealthCheckMetricsObserver) RecordStateTransition(
+	target url.URL,
+	healthy bool,
+) {
+	o.transitions = append(o.transitions, recordedHealthCheckTransition{
+		target:  target,
+		healthy: healthy,
+	})
 }
 
 type observerTestPicker struct {

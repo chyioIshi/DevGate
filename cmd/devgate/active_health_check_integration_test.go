@@ -4,10 +4,14 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) {
@@ -32,6 +36,8 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 	probeTransport := &failingProbeRoundTripper{
 		called: make(chan struct{}, 1),
 	}
+	registry := prometheus.NewRegistry()
+	activeHealthCheckMetrics := metrics.NewActiveHealthCheck(registry)
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
 		dataTransport,
@@ -40,6 +46,7 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		activeHealthCheckMetrics,
 		nil,
 		discardLogger(),
 	)
@@ -66,6 +73,19 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 	waitForProbeCall(t, probeTransport.called)
 
 	waitForServiceUnavailable(t, handler)
+
+	const wantMetrics = `
+# HELP devgate_active_health_check_probes_total Total number of active health check probes.
+# TYPE devgate_active_health_check_probes_total counter
+devgate_active_health_check_probes_total{outcome="failure",route="users",target="http://upstream.example"} 1
+# HELP devgate_active_health_check_endpoint_healthy Whether the endpoint is healthy (1 for healthy, 0 for unhealthy).
+# TYPE devgate_active_health_check_endpoint_healthy gauge
+devgate_active_health_check_endpoint_healthy{route="users",target="http://upstream.example"} 0
+`
+	if err := testutil.GatherAndCompare(registry, strings.NewReader(wantMetrics)); err != nil {
+		t.Errorf("active health check metrics mismatch: %v", err)
+	}
+
 	callsAfterFailure := dataTransport.calls
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(

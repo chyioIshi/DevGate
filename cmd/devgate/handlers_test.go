@@ -41,6 +41,7 @@ func handlersFromRoutes(
 		circuitOpenTimeout,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
+		newTestActiveHealthCheckMetrics(),
 		trustedCIDRs,
 		logger,
 	)
@@ -153,6 +154,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -194,6 +196,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 		testCircuitOpenTimeout,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -205,7 +208,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 	}
 	for _, context := range []string{
 		"active",
-		"create health checker",
+		"create active health checker",
 		"http client was not provided",
 	} {
 		if !strings.Contains(err.Error(), context) {
@@ -1452,4 +1455,8 @@ func newTestCircuitBreakerMetrics() *metrics.CircuitBreaker {
 
 func newTestRateLimiterMetrics() *metrics.RateLimiter {
 	return metrics.NewRateLimiter(prometheus.NewRegistry())
+}
+
+func newTestActiveHealthCheckMetrics() *metrics.ActiveHealthCheck {
+	return metrics.NewActiveHealthCheck(prometheus.NewRegistry())
 }
