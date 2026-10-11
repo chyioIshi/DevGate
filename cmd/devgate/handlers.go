@@ -61,6 +61,7 @@ func routeRuntimeFromRoutes(
 	circuitOpenTimeout time.Duration,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
+	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
 	trustedCIDRs []netip.Prefix,
 	logger *slog.Logger,
 ) (*routeRuntime, error) {
@@ -174,6 +175,7 @@ func routeRuntimeFromRoutes(
 					targetPicker,
 					healthCheckClient,
 					logger,
+					activeHealthCheckMetrics,
 				)
 				if err != nil {
 					return nil, fmt.Errorf(
@@ -297,6 +299,7 @@ func targetPickerWithActiveHealthCheck(
 	basePicker replaceableTargetPicker,
 	client *http.Client,
 	logger *slog.Logger,
+	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
 ) (proxy.TargetPicker, *upstream.HealthChecker, error) {
 	if routeUpstream.ActiveHealthCheck == nil {
 		return basePicker, nil, nil
@@ -326,6 +329,10 @@ func targetPickerWithActiveHealthCheck(
 		routeName: routeName,
 		picker:    healthAwarePicker,
 		logger:    logger,
+		metricsObserver: activeHealthCheckMetrics.ForRoute(
+			routeName,
+			routeUpstream.Endpoints,
+		),
 	}
 	routeHealthChecker, err := upstream.NewHealthChecker(
 		client,
