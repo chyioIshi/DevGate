@@ -22,9 +22,10 @@ const (
 
 // Upstream describes a group of backend endpoints and its load-balancing policy.
 type Upstream struct {
-	LoadBalancing     LoadBalancingPolicy
-	Endpoints         []url.URL
-	ActiveHealthCheck *ActiveHealthCheckPolicy
+	LoadBalancing      LoadBalancingPolicy
+	Endpoints          []url.URL
+	ActiveHealthCheck  *ActiveHealthCheckPolicy
+	PassiveHealthCheck *PassiveHealthCheckPolicy
 }
 
 func (u *Upstream) validate() error {
@@ -52,6 +53,11 @@ func (u *Upstream) validate() error {
 	if u.ActiveHealthCheck != nil {
 		if err := u.ActiveHealthCheck.validate(); err != nil {
 			return fmt.Errorf("active health check validation: %w", err)
+		}
+	}
+	if u.PassiveHealthCheck != nil {
+		if err := u.PassiveHealthCheck.validate(); err != nil {
+			return fmt.Errorf("passive health check validation: %w", err)
 		}
 	}
 	return nil
@@ -92,6 +98,23 @@ func (p *ActiveHealthCheckPolicy) validate() error {
 	}
 	if p.MaxConcurrentProbes <= 0 {
 		return errors.New("max concurrent probes must be positive")
+	}
+	return nil
+}
+
+// PassiveHealthCheckPolicy defines data-plane failure detection and temporary
+// endpoint ejection settings for an upstream pool.
+type PassiveHealthCheckPolicy struct {
+	ConsecutiveFailures int
+	EjectionDuration    time.Duration
+}
+
+func (p *PassiveHealthCheckPolicy) validate() error {
+	if p.ConsecutiveFailures <= 0 {
+		return errors.New("consecutive failures must be positive")
+	}
+	if p.EjectionDuration <= 0 {
+		return errors.New("ejection duration must be positive")
 	}
 	return nil
 }

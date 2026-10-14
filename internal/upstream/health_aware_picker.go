@@ -12,12 +12,12 @@ import (
 // accept a request.
 var ErrNoHealthyEndpoints = errors.New("no healthy endpoints")
 
-// HealthAwarePicker restricts target selection to the healthy endpoint
-// snapshot published by a HealthTracker.
+// HealthAwarePicker restricts target selection to the snapshot published by a
+// healthy endpoint source.
 type HealthAwarePicker struct {
 	mu        sync.Mutex
 	picker    replaceablePicker
-	tracker   *HealthTracker
+	source    healthyEndpointSource
 	available atomic.Bool
 }
 
@@ -26,21 +26,25 @@ type replaceablePicker interface {
 	Replace([]url.URL) error
 }
 
+type healthyEndpointSource interface {
+	HealthyEndpoints() []url.URL
+}
+
 // NewHealthAwarePicker creates a picker and synchronizes it with the current
 // health snapshot.
 func NewHealthAwarePicker(
 	picker replaceablePicker,
-	tracker *HealthTracker,
+	source healthyEndpointSource,
 ) (*HealthAwarePicker, error) {
 	if picker == nil {
 		return nil, errors.New("picker was not provided")
 	}
-	if tracker == nil {
-		return nil, errors.New("tracker was not provided")
+	if source == nil {
+		return nil, errors.New("healthy endpoint source was not provided")
 	}
 	healthAwarePicker := &HealthAwarePicker{
-		picker:  picker,
-		tracker: tracker,
+		picker: picker,
+		source: source,
 	}
 	if err := healthAwarePicker.Refresh(); err != nil {
 		return nil, fmt.Errorf("refresh health-aware picker: %w", err)
@@ -58,14 +62,14 @@ func (p *HealthAwarePicker) Acquire() (url.URL, func(), error) {
 	return p.picker.Acquire()
 }
 
-// Refresh publishes the tracker's current healthy endpoint snapshot. An empty
+// Refresh publishes the source's current healthy endpoint snapshot. An empty
 // snapshot closes the picker without replacing its last non-empty snapshot.
 func (p *HealthAwarePicker) Refresh() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	p.available.Store(false)
-	healthyEndpoints := p.tracker.HealthyEndpoints()
+	healthyEndpoints := p.source.HealthyEndpoints()
 	if len(healthyEndpoints) == 0 {
 		return nil
 	}

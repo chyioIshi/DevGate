@@ -161,6 +161,43 @@ Targets use redacted URLs so configured passwords are not exposed by the
 metrics endpoint. Error messages are intentionally excluded from labels to
 keep label cardinality bounded.
 
+## Passive health checks
+
+An upstream pool can temporarily eject endpoints based on real proxied request
+outcomes:
+
+```yaml
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream:
+      load_balancing: round_robin
+      discovery:
+        static:
+          endpoints:
+            - url: http://users-service-1:8080
+            - url: http://users-service-2:8080
+      passive_health_check:
+        consecutive_failures: 3
+        ejection_duration: 30s
+```
+
+Transport errors and final `5xx` responses count as failures. A successful
+non-`5xx` response resets the consecutive-failure counter. Requests canceled
+by the downstream client or gateway context do not affect endpoint health.
+
+Once an endpoint reaches `consecutive_failures`, DevGate removes it from load
+balancing for `ejection_duration`. It becomes eligible again automatically
+after that period. Passive health observes the final result after retries, and
+requests rejected by the route circuit breaker are not counted as endpoint
+failures.
+
+When active and passive health checks are both configured, an endpoint must be
+healthy according to both mechanisms to receive traffic. If no eligible
+endpoint remains, DevGate fails closed with `503 Service Unavailable` without
+attempting an upstream request.
+
 ## Direct responses
 
 A route can return a static HTTP response without forwarding the request to an

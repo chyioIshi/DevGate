@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"slices"
 
+	"github.com/chyioishi/devgate/internal/proxytarget"
 	"github.com/chyioishi/devgate/internal/requestid"
 )
 
@@ -76,6 +77,8 @@ func New(
 				releaseContextKey{},
 				acquiredTarget.release,
 			)
+			ctx = proxytarget.WithTarget(ctx, acquiredTarget.target)
+
 			pr.Out = pr.Out.WithContext(ctx)
 			pr.SetURL(&acquiredTarget.target)
 			// Share the trailer map so values populated at inbound body EOF are
