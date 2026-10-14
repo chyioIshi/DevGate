@@ -68,8 +68,8 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 		)
 	}
 
-	stopHealthChecks := runtime.startHealthChecks(context.Background())
-	defer stopHealthChecks()
+	stopHealthRunners := runtime.startHealthRunners(context.Background())
+	defer stopHealthRunners()
 	waitForProbeCall(t, probeTransport.called)
 
 	waitForServiceUnavailable(t, handler)

@@ -786,3 +786,69 @@ func TestUpstreamFromConfigMapsActiveHealthCheck(t *testing.T) {
 		t.Errorf("active health check = %+v, want %+v", got.ActiveHealthCheck, want)
 	}
 }
+
+func TestPassiveHealthCheckPolicyFromConfig(t *testing.T) {
+	t.Parallel()
+
+	if got := passiveHealthCheckPolicyFromConfig(nil); got != nil {
+		t.Errorf("passiveHealthCheckPolicyFromConfig(nil) = %#v, want nil", got)
+	}
+
+	cfg := &config.PassiveHealthCheckConfig{
+		ConsecutiveFailures: 5,
+		EjectionDuration:    30 * time.Second,
+	}
+	want := &router.PassiveHealthCheckPolicy{
+		ConsecutiveFailures: 5,
+		EjectionDuration:    30 * time.Second,
+	}
+
+	got := passiveHealthCheckPolicyFromConfig(cfg)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("passiveHealthCheckPolicyFromConfig() = %+v, want %+v", got, want)
+	}
+	if got == nil {
+		t.Fatal("passiveHealthCheckPolicyFromConfig() = nil, want non-nil")
+	}
+	got.ConsecutiveFailures = 10
+	if cfg.ConsecutiveFailures != 5 {
+		t.Errorf(
+			"mutating mapped policy changed config consecutive failures to %d",
+			cfg.ConsecutiveFailures,
+		)
+	}
+}
+
+func TestUpstreamFromConfigMapsPassiveHealthCheck(t *testing.T) {
+	t.Parallel()
+
+	upstreamConfig := &config.UpstreamConfig{
+		LoadBalancing: config.LoadBalancingPolicyRoundRobin,
+		Discovery: &config.UpstreamDiscoveryConfig{
+			Static: &config.StaticUpstreamDiscoveryConfig{
+				Endpoints: []config.UpstreamEndpointConfig{
+					{URL: "http://server-1:8080"},
+				},
+			},
+		},
+		PassiveHealthCheck: &config.PassiveHealthCheckConfig{
+			ConsecutiveFailures: 5,
+			EjectionDuration:    30 * time.Second,
+		},
+	}
+
+	got, err := upstreamFromConfig(config.RouteConfig{
+		Name:     "users",
+		Upstream: upstreamConfig,
+	})
+	if err != nil {
+		t.Fatalf("upstreamFromConfig() error = %v", err)
+	}
+	want := &router.PassiveHealthCheckPolicy{
+		ConsecutiveFailures: 5,
+		EjectionDuration:    30 * time.Second,
+	}
+	if !reflect.DeepEqual(got.PassiveHealthCheck, want) {
+		t.Errorf("passive health check = %+v, want %+v", got.PassiveHealthCheck, want)
+	}
+}

@@ -164,8 +164,86 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 	if got := len(runtime.handlers); got != len(routes) {
 		t.Errorf("handler count = %d, want %d", got, len(routes))
 	}
-	if got := len(runtime.healthCheckers); got != 1 {
+	if got := len(runtime.healthRunners); got != 1 {
 		t.Errorf("health checker count = %d, want 1", got)
+	}
+}
+
+func TestRouteRuntimeFromRoutesCollectsPassiveHealthRunner(t *testing.T) {
+	t.Parallel()
+
+	routeUpstream := testRouteUpstream(t, "http://passive.example")
+	routeUpstream.PassiveHealthCheck = &router.PassiveHealthCheckPolicy{
+		ConsecutiveFailures: 2,
+		EjectionDuration:    time.Minute,
+	}
+	route := router.Route{
+		Name:       "passive",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/passive",
+		Upstream:   routeUpstream,
+	}
+
+	runtime, err := routeRuntimeFromRoutes(
+		[]router.Route{route},
+		&countingRoundTripper{},
+		nil,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	if got := len(runtime.healthRunners); got != 1 {
+		t.Errorf("health runner count = %d, want 1", got)
+	}
+}
+
+func TestRouteRuntimeFromRoutesCollectsActiveAndPassiveHealthRunners(t *testing.T) {
+	t.Parallel()
+
+	routeUpstream := testRouteUpstream(t, "http://combined.example")
+	routeUpstream.ActiveHealthCheck = &router.ActiveHealthCheckPolicy{
+		Path:                "/healthz",
+		Interval:            time.Minute,
+		Timeout:             time.Second,
+		HealthyThreshold:    1,
+		UnhealthyThreshold:  1,
+		MaxConcurrentProbes: 1,
+	}
+	routeUpstream.PassiveHealthCheck = &router.PassiveHealthCheckPolicy{
+		ConsecutiveFailures: 2,
+		EjectionDuration:    time.Minute,
+	}
+	route := router.Route{
+		Name:       "combined",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/combined",
+		Upstream:   routeUpstream,
+	}
+
+	runtime, err := routeRuntimeFromRoutes(
+		[]router.Route{route},
+		&countingRoundTripper{},
+		&http.Client{Transport: &countingRoundTripper{}},
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	if got := len(runtime.healthRunners); got != 2 {
+		t.Errorf("health runner count = %d, want 2", got)
 	}
 }
 

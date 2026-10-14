@@ -312,6 +312,42 @@ routes:
 	}
 }
 
+func TestDecodeConfigPassiveHealthCheck(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /users
+    upstream:
+      passive_health_check:
+        consecutive_failures: 5
+        ejection_duration: 30s
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+	if len(got.Routes) != 1 {
+		t.Fatalf("decodeConfig() route count = %d, want 1", len(got.Routes))
+	}
+	if got.Routes[0].Upstream == nil {
+		t.Fatal("decodeConfig() upstream = nil, want non-nil")
+	}
+
+	healthCheck := got.Routes[0].Upstream.PassiveHealthCheck
+	if healthCheck == nil {
+		t.Fatal("decodeConfig() passive health check = nil, want non-nil")
+	}
+	want := PassiveHealthCheckConfig{
+		ConsecutiveFailures: 5,
+		EjectionDuration:    30 * time.Second,
+	}
+	if !reflect.DeepEqual(*healthCheck, want) {
+		t.Errorf("decodeConfig() passive health check = %+v, want %+v", *healthCheck, want)
+	}
+}
+
 func TestDecodeConfigRejectsUnknownUpstreamFields(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -361,6 +397,15 @@ func TestDecodeConfigRejectsUnknownUpstreamFields(t *testing.T) {
         path: /healthz
         unknown_health_check: value`,
 			unknownField: "unknown_health_check",
+		},
+		{
+			name: "passive health check",
+			upstreamYAML: `
+      load_balancing: round_robin
+      passive_health_check:
+        consecutive_failures: 5
+        unknown_passive_health_check: value`,
+			unknownField: "unknown_passive_health_check",
 		},
 	}
 
@@ -441,6 +486,30 @@ routes:
 				t.Errorf("decodeConfig() error = %q, want invalid duration context", err)
 			}
 		})
+	}
+}
+
+func TestDecodeConfigRejectsInvalidPassiveHealthCheckDuration(t *testing.T) {
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /users
+    upstream:
+      passive_health_check:
+        consecutive_failures: 5
+        ejection_duration: later
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err == nil {
+		t.Fatal("decodeConfig() error = nil, want invalid duration error")
+	}
+	if got.Routes != nil {
+		t.Errorf("decodeConfig().Routes = %+v, want nil", got.Routes)
+	}
+	if !strings.Contains(err.Error(), "invalid duration") {
+		t.Errorf("decodeConfig() error = %q, want invalid duration context", err)
 	}
 }
 

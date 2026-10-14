@@ -241,6 +241,66 @@ func TestActiveHealthCheckPolicyValidate(t *testing.T) {
 	}
 }
 
+func TestPassiveHealthCheckPolicyValidate(t *testing.T) {
+	t.Parallel()
+
+	valid := PassiveHealthCheckPolicy{
+		ConsecutiveFailures: 5,
+		EjectionDuration:    30 * time.Second,
+	}
+	tests := []struct {
+		name        string
+		mutate      func(*PassiveHealthCheckPolicy)
+		wantMessage string
+	}{
+		{name: "valid policy"},
+		{
+			name:        "zero consecutive failures",
+			mutate:      func(p *PassiveHealthCheckPolicy) { p.ConsecutiveFailures = 0 },
+			wantMessage: "consecutive failures",
+		},
+		{
+			name:        "negative consecutive failures",
+			mutate:      func(p *PassiveHealthCheckPolicy) { p.ConsecutiveFailures = -1 },
+			wantMessage: "consecutive failures",
+		},
+		{
+			name:        "zero ejection duration",
+			mutate:      func(p *PassiveHealthCheckPolicy) { p.EjectionDuration = 0 },
+			wantMessage: "ejection duration",
+		},
+		{
+			name:        "negative ejection duration",
+			mutate:      func(p *PassiveHealthCheckPolicy) { p.EjectionDuration = -time.Second },
+			wantMessage: "ejection duration",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			policy := valid
+			if tt.mutate != nil {
+				tt.mutate(&policy)
+			}
+			err := policy.validate()
+			if tt.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validate() error = nil, want error containing %q", tt.wantMessage)
+			}
+			if !strings.Contains(err.Error(), tt.wantMessage) {
+				t.Errorf("validate() error = %q, want it to contain %q", err, tt.wantMessage)
+			}
+		})
+	}
+}
+
 func TestNewValidatesUpstreamAction(t *testing.T) {
 	t.Parallel()
 
@@ -309,6 +369,22 @@ func TestNewValidatesUpstreamAction(t *testing.T) {
 				},
 			},
 			wantMessage: "upstream validation: active health check validation: path",
+		},
+		{
+			name: "invalid passive health check",
+			route: Route{
+				Name:       "users",
+				Protocol:   ProtocolHTTP,
+				PathPrefix: "/users",
+				Upstream: &Upstream{
+					LoadBalancing: LoadBalancingPolicyRoundRobin,
+					Endpoints: []url.URL{
+						*mustParseURL(t, "http://server-1:8080"),
+					},
+					PassiveHealthCheck: &PassiveHealthCheckPolicy{},
+				},
+			},
+			wantMessage: "upstream validation: passive health check validation: consecutive failures",
 		},
 	}
 
