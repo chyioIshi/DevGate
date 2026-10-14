@@ -21,18 +21,18 @@ func TestNewHealthAwarePickerRejectsMissingDependencies(t *testing.T) {
 	tests := []struct {
 		name        string
 		picker      replaceablePicker
-		tracker     *HealthTracker
+		source      healthyEndpointSource
 		wantMessage string
 	}{
 		{
 			name:        "missing picker",
-			tracker:     tracker,
+			source:      tracker,
 			wantMessage: "picker was not provided",
 		},
 		{
-			name:        "missing tracker",
+			name:        "missing source",
 			picker:      &recordingReplaceablePicker{},
-			wantMessage: "tracker was not provided",
+			wantMessage: "healthy endpoint source was not provided",
 		},
 	}
 
@@ -40,7 +40,7 @@ func TestNewHealthAwarePickerRejectsMissingDependencies(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := NewHealthAwarePicker(test.picker, test.tracker)
+			got, err := NewHealthAwarePicker(test.picker, test.source)
 			if err == nil {
 				t.Fatalf("NewHealthAwarePicker() error = nil, want %q", test.wantMessage)
 			}

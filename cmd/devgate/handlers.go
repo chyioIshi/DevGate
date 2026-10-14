@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -24,17 +25,17 @@ import (
 )
 
 type routeRuntime struct {
-	handlers       map[string]http.Handler
-	healthCheckers []healthCheckRunner
+	handlers      map[string]http.Handler
+	healthRunners []healthRunner
 }
 
-func (r *routeRuntime) startHealthChecks(ctx context.Context) func() {
-	healthCheckCtx, cancel := context.WithCancel(ctx)
+func (r *routeRuntime) startHealthRunners(ctx context.Context) func() {
+	healthRunCtx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 
-	for _, healthChecker := range r.healthCheckers {
+	for _, runner := range r.healthRunners {
 		wg.Go(func() {
-			healthChecker.Run(healthCheckCtx)
+			runner.Run(healthRunCtx)
 		})
 	}
 
@@ -49,7 +50,7 @@ type replaceableTargetPicker interface {
 	Replace([]url.URL) error
 }
 
-type healthCheckRunner interface {
+type healthRunner interface {
 	Run(context.Context)
 }
 
@@ -114,17 +115,6 @@ func routeRuntimeFromRoutes(
 		case route.Upstream != nil:
 			switch route.Protocol {
 			case router.ProtocolHTTP:
-				circuitBreakerRouteMetrics := circuitBreakerMetrics.ForRoute(route.Name)
-				circuitBreakerTransport, err := proxy.NewCircuitBreakerTransport(
-					transport,
-					circuitFailureThreshold,
-					circuitOpenTimeout,
-					circuitBreakerRouteMetrics,
-				)
-				if err != nil {
-					return nil, fmt.Errorf("create circuit breaker transport for route %q: %w", route.Name, err)
-				}
-
 				var requestHeaderTransform proxy.RequestHeaderTransform
 				if route.RequestHeaders != nil {
 					requestHeaderTransform = route.RequestHeaders.Apply
@@ -167,26 +157,108 @@ func routeRuntimeFromRoutes(
 					)
 				}
 
-				selectedTargetPicker,
-					healthChecker,
-					err := targetPickerWithActiveHealthCheck(
-					route.Name,
+				activeHealthTracker, err := newRouteActiveHealthTracker(
 					route.Upstream,
-					targetPicker,
-					healthCheckClient,
-					logger,
-					activeHealthCheckMetrics,
 				)
 				if err != nil {
 					return nil, fmt.Errorf(
-						"configure active health check for route %q: %w",
+						"configure active health for route %q: %w",
 						route.Name,
 						err,
 					)
 				}
-				if healthChecker != nil {
-					runtime.healthCheckers = append(runtime.healthCheckers, healthChecker)
+				passiveHealthTracker, err := newRoutePassiveHealthTracker(
+					route.Upstream,
+				)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"configure passive health for route %q: %w",
+						route.Name,
+						err,
+					)
 				}
+
+				selectedTargetPicker := proxy.TargetPicker(targetPicker)
+				var healthAwarePicker *upstream.HealthAwarePicker
+				if activeHealthTracker != nil || passiveHealthTracker != nil {
+					healthAwarePicker, err = newRouteHealthAwarePicker(
+						targetPicker,
+						activeHealthTracker,
+						passiveHealthTracker,
+					)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"configure health-aware picker for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+					selectedTargetPicker = healthAwarePicker
+				}
+
+				if activeHealthTracker != nil {
+					activeHealthChecker, err := newRouteActiveHealthChecker(
+						route.Name,
+						route.Upstream,
+						activeHealthTracker,
+						healthAwarePicker,
+						healthCheckClient,
+						logger,
+						activeHealthCheckMetrics,
+					)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"configure active health checker for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+					runtime.healthRunners = append(runtime.healthRunners, activeHealthChecker)
+				}
+
+				routeTransport := transport
+
+				if passiveHealthTracker != nil {
+					routePassiveHealthObserver, err := newRoutePassiveHealthObserver(
+						route.Name,
+						passiveHealthTracker,
+						healthAwarePicker,
+						logger,
+					)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"create passive health observer for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+					routePassiveHealthTransport, err := upstream.NewPassiveHealthTransport(
+						routeTransport,
+						passiveHealthTracker,
+						routePassiveHealthObserver,
+					)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"create passive health transport for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+					runtime.healthRunners = append(runtime.healthRunners, routePassiveHealthObserver)
+					routeTransport = routePassiveHealthTransport
+				}
+
+				circuitBreakerRouteMetrics := circuitBreakerMetrics.ForRoute(route.Name)
+				circuitBreakerTransport, err := proxy.NewCircuitBreakerTransport(
+					routeTransport,
+					circuitFailureThreshold,
+					circuitOpenTimeout,
+					circuitBreakerRouteMetrics,
+				)
+				if err != nil {
+					return nil, fmt.Errorf("create circuit breaker transport for route %q: %w", route.Name, err)
+				}
+
 				routeHandler = proxy.New(
 					selectedTargetPicker,
 					circuitBreakerTransport,
@@ -293,41 +365,52 @@ func routeRuntimeFromRoutes(
 	return runtime, nil
 }
 
-func targetPickerWithActiveHealthCheck(
+func newRouteHealthAwarePicker(
+	base replaceableTargetPicker,
+	activeTracker *upstream.HealthTracker,
+	passiveTracker *upstream.PassiveHealthTracker,
+) (*upstream.HealthAwarePicker, error) {
+	if activeTracker == nil && passiveTracker == nil {
+		return nil, errors.New("both active and passive health trackers cannot be nil")
+	}
+	var healthSource *upstream.CompositeHealthSource
+	var err error
+
+	switch {
+	case activeTracker == nil:
+		healthSource, err = upstream.NewCompositeHealthSource(passiveTracker)
+	case passiveTracker == nil:
+		healthSource, err = upstream.NewCompositeHealthSource(activeTracker)
+	default:
+		healthSource, err = upstream.NewCompositeHealthSource(activeTracker, passiveTracker)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create composite health source: %w", err)
+	}
+
+	healthAwarePicker, err := upstream.NewHealthAwarePicker(
+		base,
+		healthSource,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create health-aware target picker: %w", err)
+	}
+
+	return healthAwarePicker, nil
+}
+
+func newRouteActiveHealthChecker(
 	routeName string,
 	routeUpstream *router.Upstream,
-	basePicker replaceableTargetPicker,
+	tracker *upstream.HealthTracker,
+	picker *upstream.HealthAwarePicker,
 	client *http.Client,
 	logger *slog.Logger,
 	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
-) (proxy.TargetPicker, *upstream.HealthChecker, error) {
-	if routeUpstream.ActiveHealthCheck == nil {
-		return basePicker, nil, nil
-	}
-	routeUpstreamHealthTracker, err := upstream.NewHealthTracker(
-		routeUpstream.Endpoints,
-		routeUpstream.ActiveHealthCheck.HealthyThreshold,
-		routeUpstream.ActiveHealthCheck.UnhealthyThreshold,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf(
-			"create health tracker: %w",
-			err,
-		)
-	}
-	healthAwarePicker, err := upstream.NewHealthAwarePicker(
-		basePicker,
-		routeUpstreamHealthTracker,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf(
-			"create health-aware target picker: %w",
-			err,
-		)
-	}
+) (*upstream.HealthChecker, error) {
 	healthCheckObserver := &routeHealthCheckObserver{
 		routeName: routeName,
-		picker:    healthAwarePicker,
+		picker:    picker,
 		logger:    logger,
 		metricsObserver: activeHealthCheckMetrics.ForRoute(
 			routeName,
@@ -336,7 +419,7 @@ func targetPickerWithActiveHealthCheck(
 	}
 	routeHealthChecker, err := upstream.NewHealthChecker(
 		client,
-		routeUpstreamHealthTracker,
+		tracker,
 		routeUpstream.ActiveHealthCheck.Interval,
 		routeUpstream.ActiveHealthCheck.Timeout,
 		routeUpstream.ActiveHealthCheck.Path,
@@ -344,12 +427,53 @@ func targetPickerWithActiveHealthCheck(
 		healthCheckObserver,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"create active health checker: %w",
 			err,
 		)
 	}
-	return healthAwarePicker, routeHealthChecker, nil
+	return routeHealthChecker, nil
+}
+
+func newRouteActiveHealthTracker(
+	routeUpstream *router.Upstream,
+) (*upstream.HealthTracker, error) {
+	if routeUpstream == nil {
+		return nil, errors.New("route upstream was not provided")
+	}
+	if routeUpstream.ActiveHealthCheck == nil {
+		return nil, nil
+	}
+	routeActiveHealthTracker, err := upstream.NewHealthTracker(
+		routeUpstream.Endpoints,
+		routeUpstream.ActiveHealthCheck.HealthyThreshold,
+		routeUpstream.ActiveHealthCheck.UnhealthyThreshold,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create active health tracker: %w", err)
+	}
+	return routeActiveHealthTracker, nil
+}
+
+func newRoutePassiveHealthTracker(
+	routeUpstream *router.Upstream,
+) (*upstream.PassiveHealthTracker, error) {
+	if routeUpstream == nil {
+		return nil, errors.New("route upstream was not provided")
+	}
+	if routeUpstream.PassiveHealthCheck == nil {
+		return nil, nil
+	}
+
+	routePassiveHealthTracker, err := upstream.NewPassiveHealthTracker(
+		routeUpstream.Endpoints,
+		routeUpstream.PassiveHealthCheck.ConsecutiveFailures,
+		routeUpstream.PassiveHealthCheck.EjectionDuration,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create passive health tracker: %w", err)
+	}
+	return routePassiveHealthTracker, nil
 }
 
 func errorResponsesFromRoute(routeErrorResponses map[int]router.ErrorResponse) map[int]errorresponse.Response {

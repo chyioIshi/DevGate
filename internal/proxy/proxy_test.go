@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/proxytarget"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/upstream"
 )
@@ -714,6 +715,51 @@ func TestReverseProxyTransformsOnlyOutgoingRequestHeaders(t *testing.T) {
 	}
 	if got := in.Header.Values("X-Added"); len(got) != 0 {
 		t.Errorf("incoming X-Added values = %q, want none", got)
+	}
+}
+
+func TestReverseProxyStoresSelectedTargetInOutgoingContext(t *testing.T) {
+	t.Parallel()
+
+	target := &url.URL{
+		Scheme:   "http",
+		Host:     "upstream.local",
+		Path:     "/api",
+		RawQuery: "target=one",
+	}
+	handler := New(
+		testTargetPicker(target),
+		http.DefaultTransport,
+		nil,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.DiscardHandler),
+	)
+	in := httptest.NewRequest(
+		http.MethodGet,
+		"http://gateway.local/users?request=two",
+		nil,
+	)
+	proxyRequest := &httputil.ProxyRequest{
+		In:  in,
+		Out: in.Clone(in.Context()),
+	}
+
+	rewriteProxyRequest(t, handler, proxyRequest)
+
+	got, ok := proxytarget.FromContext(proxyRequest.Out.Context())
+	if !ok {
+		t.Fatal("proxytarget.FromContext() ok = false, want true")
+	}
+	if got != *target {
+		t.Errorf("selected target = %v, want configured target %v", got, *target)
+	}
+	if proxyRequest.Out.URL.String() == target.String() {
+		t.Errorf(
+			"rewritten request URL = configured target %q, want joined request URL",
+			target,
+		)
 	}
 }
 

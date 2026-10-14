@@ -160,7 +160,11 @@ func upstreamFromConfig(routeConfig config.RouteConfig) (*router.Upstream, error
 		activeHealthCheck := activeHealthCheckPolicyFromConfig(
 			routeConfig.Upstream.ActiveHealthCheck,
 		)
+		passiveHealthCheck := passiveHealthCheckPolicyFromConfig(
+			routeConfig.Upstream.PassiveHealthCheck,
+		)
 		routeUpstream.ActiveHealthCheck = activeHealthCheck
+		routeUpstream.PassiveHealthCheck = passiveHealthCheck
 		return routeUpstream, nil
 	}
 
@@ -180,6 +184,18 @@ func activeHealthCheckPolicyFromConfig(
 		HealthyThreshold:    cfg.HealthyThreshold,
 		UnhealthyThreshold:  cfg.UnhealthyThreshold,
 		MaxConcurrentProbes: cfg.MaxConcurrentProbes,
+	}
+}
+
+func passiveHealthCheckPolicyFromConfig(
+	cfg *config.PassiveHealthCheckConfig,
+) *router.PassiveHealthCheckPolicy {
+	if cfg == nil {
+		return nil
+	}
+	return &router.PassiveHealthCheckPolicy{
+		ConsecutiveFailures: cfg.ConsecutiveFailures,
+		EjectionDuration:    cfg.EjectionDuration,
 	}
 }
 

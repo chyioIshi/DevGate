@@ -115,8 +115,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		IdleTimeout:       cfg.IdleTimeout,
 	}
-	stopHealthChecks := routeRuntime.startHealthChecks(ctx)
-	defer stopHealthChecks()
+	stopHealthRunners := routeRuntime.startHealthRunners(ctx)
+	defer stopHealthRunners()
 
 	return serve(ctx, server, logger, cfg.ShutdownTimeout)
 }

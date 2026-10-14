@@ -6,22 +6,22 @@ import (
 	"time"
 )
 
-func TestRouteRuntimeStartsAndStopsHealthChecks(t *testing.T) {
+func TestRouteRuntimeStartsAndStopsHealthRunners(t *testing.T) {
 	t.Parallel()
 
-	first := newBlockingHealthCheckRunner()
-	second := newBlockingHealthCheckRunner()
+	first := newBlockingHealthRunner()
+	second := newBlockingHealthRunner()
 	runtime := &routeRuntime{
-		healthCheckers: []healthCheckRunner{first, second},
+		healthRunners: []healthRunner{first, second},
 	}
 
-	stop := runtime.startHealthChecks(context.Background())
-	waitForRuntimeSignal(t, first.started, "first health checker did not start")
-	waitForRuntimeSignal(t, second.started, "second health checker did not start")
-	for i, runner := range []*blockingHealthCheckRunner{first, second} {
+	stop := runtime.startHealthRunners(context.Background())
+	waitForRuntimeSignal(t, first.started, "first health runner did not start")
+	waitForRuntimeSignal(t, second.started, "second health runner did not start")
+	for i, runner := range []*blockingHealthRunner{first, second} {
 		select {
 		case <-runner.stopped:
-			t.Errorf("health checker %d stopped before cleanup", i)
+			t.Errorf("health runner %d stopped before cleanup", i)
 		default:
 		}
 	}
@@ -31,24 +31,24 @@ func TestRouteRuntimeStartsAndStopsHealthChecks(t *testing.T) {
 		stop()
 		close(cleanupDone)
 	}()
-	waitForRuntimeSignal(t, cleanupDone, "health-check cleanup did not return")
-	waitForRuntimeSignal(t, first.stopped, "first health checker did not stop")
-	waitForRuntimeSignal(t, second.stopped, "second health checker did not stop")
+	waitForRuntimeSignal(t, cleanupDone, "health-runner cleanup did not return")
+	waitForRuntimeSignal(t, first.stopped, "first health runner did not stop")
+	waitForRuntimeSignal(t, second.stopped, "second health runner did not stop")
 }
 
-type blockingHealthCheckRunner struct {
+type blockingHealthRunner struct {
 	started chan struct{}
 	stopped chan struct{}
 }
 
-func newBlockingHealthCheckRunner() *blockingHealthCheckRunner {
-	return &blockingHealthCheckRunner{
+func newBlockingHealthRunner() *blockingHealthRunner {
+	return &blockingHealthRunner{
 		started: make(chan struct{}),
 		stopped: make(chan struct{}),
 	}
 }
 
-func (r *blockingHealthCheckRunner) Run(ctx context.Context) {
+func (r *blockingHealthRunner) Run(ctx context.Context) {
 	close(r.started)
 	<-ctx.Done()
 	close(r.stopped)
