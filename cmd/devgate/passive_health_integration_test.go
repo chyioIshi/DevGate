@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +11,94 @@ import (
 	"time"
 
 	"github.com/chyioishi/devgate/internal/metrics"
+	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/router"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
+
+func TestPassiveHealthObservesSuccessfulFinalRetryOutcome(t *testing.T) {
+	t.Parallel()
+
+	baseTransport := &passiveRetrySequenceRoundTripper{
+		errors: []error{
+			errors.New("first attempt failed"),
+			errors.New("second attempt failed"),
+			nil,
+			nil,
+		},
+	}
+	retryTransport, err := proxy.NewRetryTransport(baseTransport, 3, time.Nanosecond)
+	if err != nil {
+		t.Fatalf("NewRetryTransport() error = %v", err)
+	}
+	handler := newPassiveRetryTestHandler(t, retryTransport, 1)
+
+	for requestNumber := range 2 {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(
+			recorder,
+			httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil),
+		)
+		if recorder.Code != http.StatusNoContent {
+			t.Fatalf(
+				"request %d status = %d, want %d",
+				requestNumber+1,
+				recorder.Code,
+				http.StatusNoContent,
+			)
+		}
+	}
+
+	if baseTransport.calls != 4 {
+		t.Errorf("upstream RoundTrip() calls = %d, want 4", baseTransport.calls)
+	}
+}
+
+func TestPassiveHealthCountsFailedRetrySeriesAsOneFailure(t *testing.T) {
+	t.Parallel()
+
+	baseTransport := &passiveRetryFailureRoundTripper{
+		err: errors.New("upstream unavailable"),
+	}
+	retryTransport, err := proxy.NewRetryTransport(baseTransport, 3, time.Nanosecond)
+	if err != nil {
+		t.Fatalf("NewRetryTransport() error = %v", err)
+	}
+	handler := newPassiveRetryTestHandler(t, retryTransport, 2)
+
+	for requestNumber := range 2 {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(
+			recorder,
+			httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil),
+		)
+		if recorder.Code != http.StatusBadGateway {
+			t.Fatalf(
+				"request %d status = %d, want %d",
+				requestNumber+1,
+				recorder.Code,
+				http.StatusBadGateway,
+			)
+		}
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(
+		recorder,
+		httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil),
+	)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf(
+			"request after ejection status = %d, want %d",
+			recorder.Code,
+			http.StatusServiceUnavailable,
+		)
+	}
+	if baseTransport.calls != 6 {
+		t.Errorf("upstream RoundTrip() calls = %d, want 6", baseTransport.calls)
+	}
+}
 
 func TestPassiveHealthCheckFailsClosedAfterEndpointEjection(t *testing.T) {
 	t.Parallel()
@@ -152,6 +237,75 @@ func TestCircuitBreakerRejectionDoesNotEjectPassiveEndpoint(t *testing.T) {
 
 type passiveFailureRoundTripper struct {
 	calls int
+}
+
+func newPassiveRetryTestHandler(
+	t *testing.T,
+	transport http.RoundTripper,
+	failureThreshold int,
+) http.Handler {
+	t.Helper()
+
+	routeUpstream := testRouteUpstream(t, "http://upstream.example")
+	routeUpstream.PassiveHealthCheck = &router.PassiveHealthCheckPolicy{
+		ConsecutiveFailures: failureThreshold,
+		EjectionDuration:    time.Hour,
+	}
+	route := router.Route{
+		Name:       "users",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/users",
+		Upstream:   routeUpstream,
+	}
+	runtime, err := routeRuntimeFromRoutes(
+		[]router.Route{route},
+		transport,
+		nil,
+		10,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	return runtime.handlers[route.Name]
+}
+
+type passiveRetrySequenceRoundTripper struct {
+	errors []error
+	calls  int
+}
+
+func (t *passiveRetrySequenceRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	var err error
+	if t.calls < len(t.errors) {
+		err = t.errors[t.calls]
+	}
+	t.calls++
+	if err != nil {
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusNoContent,
+		Header:     make(http.Header),
+		Body:       http.NoBody,
+		Request:    request,
+	}, nil
+}
+
+type passiveRetryFailureRoundTripper struct {
+	err   error
+	calls int
+}
+
+func (t *passiveRetryFailureRoundTripper) RoundTrip(*http.Request) (*http.Response, error) {
+	t.calls++
+	return nil, t.err
 }
 
 func (t *passiveFailureRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
