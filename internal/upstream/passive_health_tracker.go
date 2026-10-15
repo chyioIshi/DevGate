@@ -28,6 +28,7 @@ type passiveEndpointHealth struct {
 
 type passiveHealthPermit struct {
 	target     string
+	state      *passiveEndpointHealth
 	generation uint64
 }
 
@@ -128,6 +129,35 @@ func (t *PassiveHealthTracker) NextRecoveryDelay() (
 	return delay, true
 }
 
+// Replace publishes a copied, non-empty endpoint snapshot while preserving
+// the passive health state of endpoints that remain in the set.
+func (t *PassiveHealthTracker) Replace(endpoints []url.URL) error {
+	if len(endpoints) == 0 {
+		return errors.New("no endpoints provided")
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	endpointsClone := slices.Clone(endpoints)
+	stateByTarget := make(map[string]*passiveEndpointHealth, len(endpointsClone))
+	for _, endpoint := range endpointsClone {
+		key := endpoint.String()
+		if existing, exists := t.stateByTarget[key]; exists {
+			existing.target = endpoint
+			stateByTarget[key] = existing
+			continue
+		}
+		stateByTarget[key] = &passiveEndpointHealth{
+			target: endpoint,
+		}
+	}
+
+	t.ordered = endpointsClone
+	t.stateByTarget = stateByTarget
+	return nil
+}
+
 func (t *PassiveHealthTracker) acquirePermit(
 	target url.URL,
 ) (passiveHealthPermit, bool) {
@@ -146,6 +176,7 @@ func (t *PassiveHealthTracker) acquirePermit(
 	}
 	return passiveHealthPermit{
 		target:     key,
+		state:      state,
 		generation: state.generation,
 	}, true
 }
@@ -158,7 +189,7 @@ func (t *PassiveHealthTracker) recordOutcome(
 	defer t.mu.Unlock()
 
 	state, exists := t.stateByTarget[permit.target]
-	if !exists || state.generation != permit.generation {
+	if !exists || state.generation != permit.generation || state != permit.state {
 		return false
 	}
 
