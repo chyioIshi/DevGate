@@ -63,6 +63,7 @@ func routeRuntimeFromRoutes(
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
 	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
+	passiveHealthCheckMetrics *metrics.PassiveHealth,
 	trustedCIDRs []netip.Prefix,
 	logger *slog.Logger,
 ) (*routeRuntime, error) {
@@ -219,11 +220,16 @@ func routeRuntimeFromRoutes(
 				routeTransport := transport
 
 				if passiveHealthTracker != nil {
+					passiveHealthCheckRouteMetrics := passiveHealthCheckMetrics.ForRoute(
+						route.Name,
+						route.Upstream.Endpoints,
+					)
 					routePassiveHealthObserver, err := newRoutePassiveHealthObserver(
 						route.Name,
 						passiveHealthTracker,
 						healthAwarePicker,
 						logger,
+						passiveHealthCheckRouteMetrics,
 					)
 					if err != nil {
 						return nil, fmt.Errorf(
