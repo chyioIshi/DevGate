@@ -120,6 +120,148 @@ func TestNewPassiveHealthTrackerInitializesIndependentState(t *testing.T) {
 	}
 }
 
+func TestPassiveHealthTrackerReplacePreservesRetainedState(t *testing.T) {
+	t.Parallel()
+
+	first := url.URL{Scheme: "http", Host: "first.example"}
+	second := url.URL{Scheme: "http", Host: "second.example"}
+	removed := url.URL{Scheme: "http", Host: "removed.example"}
+	added := url.URL{Scheme: "http", Host: "added.example"}
+	tracker, err := NewPassiveHealthTracker(
+		[]url.URL{first, second, removed},
+		2,
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("NewPassiveHealthTracker() error = %v", err)
+	}
+
+	firstPermit, ok := tracker.acquirePermit(first)
+	if !ok {
+		t.Fatal("first acquirePermit() allowed = false, want true")
+	}
+	tracker.recordOutcome(firstPermit, passiveHealthOutcomeFailure)
+	firstPermit, ok = tracker.acquirePermit(first)
+	if !ok {
+		t.Fatal("second first-endpoint acquirePermit() allowed = false, want true")
+	}
+	if !tracker.recordOutcome(firstPermit, passiveHealthOutcomeFailure) {
+		t.Fatal("second first-endpoint failure did not eject endpoint")
+	}
+	secondPermit, ok := tracker.acquirePermit(second)
+	if !ok {
+		t.Fatal("second acquirePermit() allowed = false, want true")
+	}
+	tracker.recordOutcome(secondPermit, passiveHealthOutcomeFailure)
+
+	firstState := tracker.stateByTarget[first.String()]
+	secondState := tracker.stateByTarget[second.String()]
+	replacement := []url.URL{second, added, second, first}
+	if err := tracker.Replace(replacement); err != nil {
+		t.Fatalf("Replace() error = %v", err)
+	}
+	replacement[0].Host = "mutated.example"
+
+	wantOrdered := []url.URL{second, added, second, first}
+	if !slices.Equal(tracker.ordered, wantOrdered) {
+		t.Errorf("ordered endpoints = %v, want %v", tracker.ordered, wantOrdered)
+	}
+	if tracker.stateByTarget[first.String()] != firstState {
+		t.Error("Replace() discarded retained first endpoint state")
+	}
+	if tracker.stateByTarget[second.String()] != secondState {
+		t.Error("Replace() discarded retained second endpoint state")
+	}
+	if firstState.ejectionUntil.IsZero() {
+		t.Error("Replace() cleared retained endpoint ejection")
+	}
+	if secondState.consecutiveFailures != 1 {
+		t.Errorf(
+			"retained consecutive failures = %d, want 1",
+			secondState.consecutiveFailures,
+		)
+	}
+	if _, exists := tracker.stateByTarget[removed.String()]; exists {
+		t.Error("Replace() retained removed endpoint state")
+	}
+	addedState := tracker.stateByTarget[added.String()]
+	if addedState == nil {
+		t.Fatal("added endpoint state = nil")
+	}
+	if addedState.consecutiveFailures != 0 || !addedState.ejectionUntil.IsZero() {
+		t.Errorf("added endpoint state = %+v, want clean state", addedState)
+	}
+	wantHealthy := []url.URL{second, added, second}
+	if got := tracker.HealthyEndpoints(); !slices.Equal(got, wantHealthy) {
+		t.Errorf("healthy endpoints = %v, want %v", got, wantHealthy)
+	}
+}
+
+func TestPassiveHealthTrackerReplaceRejectsEmptySnapshotWithoutMutation(t *testing.T) {
+	t.Parallel()
+
+	target := url.URL{Scheme: "http", Host: "upstream.example"}
+	tracker, err := NewPassiveHealthTracker([]url.URL{target}, 1, time.Minute)
+	if err != nil {
+		t.Fatalf("NewPassiveHealthTracker() error = %v", err)
+	}
+	wantState := tracker.stateByTarget[target.String()]
+
+	err = tracker.Replace(nil)
+
+	if err == nil {
+		t.Fatal("Replace() error = nil, want validation error")
+	}
+	if !strings.Contains(err.Error(), "no endpoints") {
+		t.Errorf("Replace() error = %q, want no endpoints context", err)
+	}
+	if !slices.Equal(tracker.ordered, []url.URL{target}) {
+		t.Errorf("ordered endpoints = %v, want original endpoint", tracker.ordered)
+	}
+	if tracker.stateByTarget[target.String()] != wantState {
+		t.Error("Replace() changed state after validation failure")
+	}
+}
+
+func TestPassiveHealthTrackerIgnoresPermitFromRemovedAndReaddedEndpoint(t *testing.T) {
+	t.Parallel()
+
+	target := url.URL{Scheme: "http", Host: "upstream.example"}
+	other := url.URL{Scheme: "http", Host: "other.example"}
+	tracker, err := NewPassiveHealthTracker([]url.URL{target}, 1, time.Minute)
+	if err != nil {
+		t.Fatalf("NewPassiveHealthTracker() error = %v", err)
+	}
+	stalePermit, ok := tracker.acquirePermit(target)
+	if !ok {
+		t.Fatal("acquirePermit() allowed = false, want true")
+	}
+	if err := tracker.Replace([]url.URL{other}); err != nil {
+		t.Fatalf("Replace() removing target error = %v", err)
+	}
+	if err := tracker.Replace([]url.URL{target}); err != nil {
+		t.Fatalf("Replace() readding target error = %v", err)
+	}
+	currentState := tracker.stateByTarget[target.String()]
+	if currentState == stalePermit.state {
+		t.Fatal("readded endpoint reused removed state")
+	}
+
+	if tracker.recordOutcome(stalePermit, passiveHealthOutcomeFailure) {
+		t.Error("stale permit ejected readded endpoint")
+	}
+	if currentState.consecutiveFailures != 0 || !currentState.ejectionUntil.IsZero() {
+		t.Errorf("stale permit changed readded endpoint state: %+v", currentState)
+	}
+	currentPermit, ok := tracker.acquirePermit(target)
+	if !ok {
+		t.Fatal("readded endpoint acquirePermit() allowed = false, want true")
+	}
+	if !tracker.recordOutcome(currentPermit, passiveHealthOutcomeFailure) {
+		t.Error("current permit failure did not eject readded endpoint")
+	}
+}
+
 func TestPassiveHealthTrackerEjectsAndRecoversEndpoint(t *testing.T) {
 	t.Parallel()
 
