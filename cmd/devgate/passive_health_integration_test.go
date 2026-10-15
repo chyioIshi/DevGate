@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/router"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestPassiveHealthCheckFailsClosedAfterEndpointEjection(t *testing.T) {
@@ -27,6 +30,8 @@ func TestPassiveHealthCheckFailsClosedAfterEndpointEjection(t *testing.T) {
 		Upstream:   routeUpstream,
 	}
 	transport := &passiveFailureRoundTripper{}
+	registry := prometheus.NewRegistry()
+	passiveHealthMetrics := metrics.NewPassiveHealth(registry)
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
 		transport,
@@ -36,6 +41,7 @@ func TestPassiveHealthCheckFailsClosedAfterEndpointEjection(t *testing.T) {
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
+		passiveHealthMetrics,
 		nil,
 		discardLogger(),
 	)
@@ -72,6 +78,18 @@ func TestPassiveHealthCheckFailsClosedAfterEndpointEjection(t *testing.T) {
 	if transport.calls != 1 {
 		t.Errorf("upstream RoundTrip() calls = %d, want 1", transport.calls)
 	}
+
+	const wantMetrics = `
+# HELP devgate_passive_health_check_ejections_total Total number of passive upstream endpoint ejections.
+# TYPE devgate_passive_health_check_ejections_total counter
+devgate_passive_health_check_ejections_total{route="users",target="http://upstream.example"} 1
+# HELP devgate_passive_health_check_endpoint_ejected Passive ejection state (1 for ejected, 0 for available).
+# TYPE devgate_passive_health_check_endpoint_ejected gauge
+devgate_passive_health_check_endpoint_ejected{route="users",target="http://upstream.example"} 1
+`
+	if err := testutil.GatherAndCompare(registry, strings.NewReader(wantMetrics)); err != nil {
+		t.Errorf("passive health check metrics mismatch: %v", err)
+	}
 }
 
 func TestCircuitBreakerRejectionDoesNotEjectPassiveEndpoint(t *testing.T) {
@@ -100,6 +118,7 @@ func TestCircuitBreakerRejectionDoesNotEjectPassiveEndpoint(t *testing.T) {
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
 		nil,
 		logger,
 	)

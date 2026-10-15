@@ -34,11 +34,13 @@ func TestRoutePassiveHealthObserverRefreshesPickerOnEjection(t *testing.T) {
 		t.Fatalf("NewPassiveHealthTracker() error = %v", err)
 	}
 	var logs bytes.Buffer
+	metricsObserver := newRecordingPassiveHealthMetricsObserver()
 	observer, err := newRoutePassiveHealthObserver(
 		"users",
 		tracker,
 		picker,
 		slog.New(slog.NewJSONHandler(&logs, nil)),
+		metricsObserver,
 	)
 	if err != nil {
 		t.Fatalf("newRoutePassiveHealthObserver() error = %v", err)
@@ -46,6 +48,14 @@ func TestRoutePassiveHealthObserverRefreshesPickerOnEjection(t *testing.T) {
 	source.endpoints = nil
 
 	observer.RecordEjection(target)
+	select {
+	case got := <-metricsObserver.ejections:
+		if got.String() != target.String() {
+			t.Errorf("metrics ejection target = %q, want %q", got.String(), target.String())
+		}
+	default:
+		t.Error("metrics observer did not receive ejection")
+	}
 
 	_, release, err := picker.Acquire()
 	if !errors.Is(err, upstream.ErrNoHealthyEndpoints) {
@@ -100,6 +110,7 @@ func TestRoutePassiveHealthObserverLogsRefreshFailure(t *testing.T) {
 		tracker,
 		picker,
 		slog.New(slog.NewJSONHandler(&logs, nil)),
+		noopPassiveHealthMetricsObserver{},
 	)
 	if err != nil {
 		t.Fatalf("newRoutePassiveHealthObserver() error = %v", err)
@@ -156,25 +167,36 @@ func TestNewRoutePassiveHealthObserverRejectsMissingDependencies(t *testing.T) {
 		tracker     *upstream.PassiveHealthTracker
 		picker      *upstream.HealthAwarePicker
 		logger      *slog.Logger
+		metrics     passiveHealthMetricsObserver
 		wantMessage string
 	}{
 		{
 			name:        "missing tracker",
 			picker:      picker,
 			logger:      logger,
+			metrics:     noopPassiveHealthMetricsObserver{},
 			wantMessage: "tracker was not provided",
 		},
 		{
 			name:        "missing picker",
 			tracker:     tracker,
 			logger:      logger,
+			metrics:     noopPassiveHealthMetricsObserver{},
 			wantMessage: "picker was not provided",
 		},
 		{
 			name:        "missing logger",
 			tracker:     tracker,
 			picker:      picker,
+			metrics:     noopPassiveHealthMetricsObserver{},
 			wantMessage: "logger was not provided",
+		},
+		{
+			name:        "missing metrics observer",
+			tracker:     tracker,
+			picker:      picker,
+			logger:      logger,
+			wantMessage: "metrics observer was not provided",
 		},
 	}
 
@@ -187,6 +209,7 @@ func TestNewRoutePassiveHealthObserverRejectsMissingDependencies(t *testing.T) {
 				test.tracker,
 				test.picker,
 				test.logger,
+				test.metrics,
 			)
 			if err == nil {
 				t.Fatalf("newRoutePassiveHealthObserver() error = nil, want %q", test.wantMessage)
@@ -224,6 +247,7 @@ func TestRoutePassiveHealthObserverCoalescesRecoveryWakeSignals(t *testing.T) {
 		tracker,
 		picker,
 		slog.New(slog.DiscardHandler),
+		noopPassiveHealthMetricsObserver{},
 	)
 	if err != nil {
 		t.Fatalf("newRoutePassiveHealthObserver() error = %v", err)
@@ -260,11 +284,13 @@ func TestRoutePassiveHealthObserverRecoversEndpointAndStops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHealthAwarePicker() error = %v", err)
 	}
+	metricsObserver := newRecordingPassiveHealthMetricsObserver()
 	observer, err := newRoutePassiveHealthObserver(
 		"users",
 		tracker,
 		picker,
 		slog.New(slog.DiscardHandler),
+		metricsObserver,
 	)
 	if err != nil {
 		t.Fatalf("newRoutePassiveHealthObserver() error = %v", err)
@@ -333,6 +359,14 @@ func TestRoutePassiveHealthObserverRecoversEndpointAndStops(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
+	select {
+	case got := <-metricsObserver.recoveries:
+		if got.String() != target.String() {
+			t.Errorf("metrics recovery target = %q, want %q", got.String(), target.String())
+		}
+	default:
+		t.Error("metrics observer did not receive recovery")
+	}
 
 	cancel()
 	select {
@@ -344,6 +378,32 @@ func TestRoutePassiveHealthObserverRecoversEndpointAndStops(t *testing.T) {
 
 type passiveObserverSource struct {
 	endpoints []url.URL
+}
+
+type noopPassiveHealthMetricsObserver struct{}
+
+func (noopPassiveHealthMetricsObserver) RecordEjection(url.URL) {}
+
+func (noopPassiveHealthMetricsObserver) RecordRecovery(url.URL) {}
+
+type recordingPassiveHealthMetricsObserver struct {
+	ejections  chan url.URL
+	recoveries chan url.URL
+}
+
+func newRecordingPassiveHealthMetricsObserver() *recordingPassiveHealthMetricsObserver {
+	return &recordingPassiveHealthMetricsObserver{
+		ejections:  make(chan url.URL, 4),
+		recoveries: make(chan url.URL, 4),
+	}
+}
+
+func (o *recordingPassiveHealthMetricsObserver) RecordEjection(target url.URL) {
+	o.ejections <- target
+}
+
+func (o *recordingPassiveHealthMetricsObserver) RecordRecovery(target url.URL) {
+	o.recoveries <- target
 }
 
 func (s *passiveObserverSource) HealthyEndpoints() []url.URL {
