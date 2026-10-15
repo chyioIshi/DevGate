@@ -47,6 +47,7 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		activeHealthCheckMetrics,
+		newTestPassiveHealthMetrics(),
 		nil,
 		discardLogger(),
 	)

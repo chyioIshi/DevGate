@@ -42,6 +42,7 @@ func handlersFromRoutes(
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
 		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
 		trustedCIDRs,
 		logger,
 	)
@@ -155,6 +156,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -193,6 +195,7 @@ func TestRouteRuntimeFromRoutesCollectsPassiveHealthRunner(t *testing.T) {
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -236,6 +239,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveAndPassiveHealthRunners(t *testing.
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -275,6 +279,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -1537,4 +1542,8 @@ func newTestRateLimiterMetrics() *metrics.RateLimiter {
 
 func newTestActiveHealthCheckMetrics() *metrics.ActiveHealthCheck {
 	return metrics.NewActiveHealthCheck(prometheus.NewRegistry())
+}
+
+func newTestPassiveHealthMetrics() *metrics.PassiveHealth {
+	return metrics.NewPassiveHealth(prometheus.NewRegistry())
 }

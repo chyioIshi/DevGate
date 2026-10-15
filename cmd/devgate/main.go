@@ -72,6 +72,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	circuitBreakerMetrics := metrics.NewCircuitBreaker(promRegistry)
 	rateLimiterMetrics := metrics.NewRateLimiter(promRegistry)
 	activeHealthCheckMetrics := metrics.NewActiveHealthCheck(promRegistry)
+	passiveHealthCheckMetrics := metrics.NewPassiveHealth(promRegistry)
 	httpMetrics := metrics.NewHTTP(promRegistry)
 
 	routeRuntime, err := routeRuntimeFromRoutes(
@@ -83,6 +84,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
 		activeHealthCheckMetrics,
+		passiveHealthCheckMetrics,
 		cfg.TrustedProxyCIDRs,
 		logger,
 	)
