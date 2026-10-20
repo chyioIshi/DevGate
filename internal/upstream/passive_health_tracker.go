@@ -129,13 +129,10 @@ func (t *PassiveHealthTracker) NextRecoveryDelay() (
 	return delay, true
 }
 
-// Replace publishes a copied, non-empty endpoint snapshot while preserving
-// the passive health state of endpoints that remain in the set.
+// Replace publishes a copied endpoint snapshot while preserving the passive
+// health state of endpoints that remain in the set. Empty snapshots remove
+// all tracked endpoints.
 func (t *PassiveHealthTracker) Replace(endpoints []url.URL) error {
-	if len(endpoints) == 0 {
-		return errors.New("no endpoints provided")
-	}
-
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
