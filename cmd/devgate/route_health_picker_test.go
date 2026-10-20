@@ -177,7 +177,7 @@ func TestNewRoutePassiveHealthTrackerWrapsConstructorError(t *testing.T) {
 	}
 }
 
-func TestNewRouteHealthAwarePickerRejectsMissingTrackers(t *testing.T) {
+func TestNewRouteHealthAwarePickerRejectsMissingEndpointMembership(t *testing.T) {
 	t.Parallel()
 
 	target := url.URL{Scheme: "http", Host: "upstream.example"}
@@ -186,16 +186,65 @@ func TestNewRouteHealthAwarePickerRejectsMissingTrackers(t *testing.T) {
 		t.Fatalf("NewRoundRobin() error = %v", err)
 	}
 
-	got, err := newRouteHealthAwarePicker(base, nil, nil)
+	got, err := newRouteHealthAwarePicker(base, nil, nil, nil)
 
 	if err == nil {
-		t.Fatal("newRouteHealthAwarePicker() error = nil, want missing trackers error")
+		t.Fatal("newRouteHealthAwarePicker() error = nil, want missing membership error")
 	}
 	if got != nil {
 		t.Errorf("newRouteHealthAwarePicker() picker = %#v, want nil", got)
 	}
-	if !strings.Contains(err.Error(), "both active and passive health trackers cannot be nil") {
-		t.Errorf("newRouteHealthAwarePicker() error = %q, want missing trackers context", err)
+	if !strings.Contains(err.Error(), "endpoint membership was not provided") {
+		t.Errorf("newRouteHealthAwarePicker() error = %q, want missing membership context", err)
+	}
+}
+
+func TestNewRouteHealthAwarePickerFollowsEndpointMembership(t *testing.T) {
+	t.Parallel()
+
+	target := url.URL{Scheme: "http", Host: "upstream.example"}
+	base, err := upstream.NewRoundRobin([]url.URL{target})
+	if err != nil {
+		t.Fatalf("NewRoundRobin() error = %v", err)
+	}
+	membership := upstream.NewEndpointMembership([]url.URL{target})
+	picker, err := newRouteHealthAwarePicker(base, membership, nil, nil)
+	if err != nil {
+		t.Fatalf("newRouteHealthAwarePicker() error = %v", err)
+	}
+
+	got, release, err := picker.Acquire()
+	if err != nil {
+		t.Fatalf("initial Acquire() error = %v", err)
+	}
+	release()
+	if got != target {
+		t.Errorf("initial Acquire() target = %v, want %v", got, target)
+	}
+
+	membership.Replace(nil)
+	if err := picker.Refresh(); err != nil {
+		t.Fatalf("Refresh() after empty membership error = %v", err)
+	}
+	_, release, err = picker.Acquire()
+	if !errors.Is(err, upstream.ErrNoHealthyEndpoints) {
+		t.Errorf("Acquire() with empty membership error = %v, want ErrNoHealthyEndpoints", err)
+	}
+	if release != nil {
+		t.Error("Acquire() with empty membership release is non-nil, want nil")
+	}
+
+	membership.Replace([]url.URL{target})
+	if err := picker.Refresh(); err != nil {
+		t.Fatalf("Refresh() after restored membership error = %v", err)
+	}
+	got, release, err = picker.Acquire()
+	if err != nil {
+		t.Fatalf("Acquire() after restored membership error = %v", err)
+	}
+	release()
+	if got != target {
+		t.Errorf("Acquire() after restored membership target = %v, want %v", got, target)
 	}
 }
 
@@ -222,6 +271,7 @@ func TestNewRouteHealthAwarePickerSupportsIndividualTrackers(t *testing.T) {
 	}{
 		{name: "active only", active: activeTracker},
 		{name: "passive only", passive: passiveTracker},
+		{name: "active and passive", active: activeTracker, passive: passiveTracker},
 	}
 
 	for _, test := range tests {
@@ -232,7 +282,13 @@ func TestNewRouteHealthAwarePickerSupportsIndividualTrackers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRoundRobin() error = %v", err)
 			}
-			picker, err := newRouteHealthAwarePicker(base, test.active, test.passive)
+			membership := upstream.NewEndpointMembership([]url.URL{target})
+			picker, err := newRouteHealthAwarePicker(
+				base,
+				membership,
+				test.active,
+				test.passive,
+			)
 			if err != nil {
 				t.Fatalf("newRouteHealthAwarePicker() error = %v", err)
 			}
@@ -244,6 +300,21 @@ func TestNewRouteHealthAwarePickerSupportsIndividualTrackers(t *testing.T) {
 			release()
 			if got != target {
 				t.Errorf("Acquire() target = %v, want %v", got, target)
+			}
+
+			membership.Replace(nil)
+			if err := picker.Refresh(); err != nil {
+				t.Fatalf("Refresh() after empty membership error = %v", err)
+			}
+			_, release, err = picker.Acquire()
+			if !errors.Is(err, upstream.ErrNoHealthyEndpoints) {
+				t.Errorf(
+					"Acquire() with empty membership error = %v, want ErrNoHealthyEndpoints",
+					err,
+				)
+			}
+			if release != nil {
+				t.Error("Acquire() with empty membership release is non-nil, want nil")
 			}
 		})
 	}
@@ -296,7 +367,13 @@ func TestNewRouteHealthAwarePickerIntersectsActiveAndPassiveHealth(t *testing.T)
 		t.Fatalf("NewRoundRobin() error = %v", err)
 	}
 
-	picker, err := newRouteHealthAwarePicker(base, activeTracker, passiveTracker)
+	membership := upstream.NewEndpointMembership(endpoints)
+	picker, err := newRouteHealthAwarePicker(
+		base,
+		membership,
+		activeTracker,
+		passiveTracker,
+	)
 	if err != nil {
 		t.Fatalf("newRouteHealthAwarePicker() error = %v", err)
 	}
