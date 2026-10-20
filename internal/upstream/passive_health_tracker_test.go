@@ -197,7 +197,7 @@ func TestPassiveHealthTrackerReplacePreservesRetainedState(t *testing.T) {
 	}
 }
 
-func TestPassiveHealthTrackerReplaceRejectsEmptySnapshotWithoutMutation(t *testing.T) {
+func TestPassiveHealthTrackerReplaceAcceptsEmptySnapshot(t *testing.T) {
 	t.Parallel()
 
 	target := url.URL{Scheme: "http", Host: "upstream.example"}
@@ -205,21 +205,20 @@ func TestPassiveHealthTrackerReplaceRejectsEmptySnapshotWithoutMutation(t *testi
 	if err != nil {
 		t.Fatalf("NewPassiveHealthTracker() error = %v", err)
 	}
-	wantState := tracker.stateByTarget[target.String()]
-
-	err = tracker.Replace(nil)
-
-	if err == nil {
-		t.Fatal("Replace() error = nil, want validation error")
+	if err := tracker.Replace(nil); err != nil {
+		t.Fatalf("Replace(nil) error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "no endpoints") {
-		t.Errorf("Replace() error = %q, want no endpoints context", err)
+	if len(tracker.ordered) != 0 {
+		t.Errorf("ordered endpoints = %v, want empty", tracker.ordered)
 	}
-	if !slices.Equal(tracker.ordered, []url.URL{target}) {
-		t.Errorf("ordered endpoints = %v, want original endpoint", tracker.ordered)
+	if _, exists := tracker.stateByTarget[target.String()]; exists {
+		t.Error("Replace(nil) retained removed endpoint state")
 	}
-	if tracker.stateByTarget[target.String()] != wantState {
-		t.Error("Replace() changed state after validation failure")
+	if got := tracker.HealthyEndpoints(); len(got) != 0 {
+		t.Errorf("HealthyEndpoints() = %v, want empty", got)
+	}
+	if _, ok := tracker.acquirePermit(target); ok {
+		t.Error("acquirePermit() allowed removed endpoint")
 	}
 }
 
@@ -227,7 +226,6 @@ func TestPassiveHealthTrackerIgnoresPermitFromRemovedAndReaddedEndpoint(t *testi
 	t.Parallel()
 
 	target := url.URL{Scheme: "http", Host: "upstream.example"}
-	other := url.URL{Scheme: "http", Host: "other.example"}
 	tracker, err := NewPassiveHealthTracker([]url.URL{target}, 1, time.Minute)
 	if err != nil {
 		t.Fatalf("NewPassiveHealthTracker() error = %v", err)
@@ -236,7 +234,7 @@ func TestPassiveHealthTrackerIgnoresPermitFromRemovedAndReaddedEndpoint(t *testi
 	if !ok {
 		t.Fatal("acquirePermit() allowed = false, want true")
 	}
-	if err := tracker.Replace([]url.URL{other}); err != nil {
+	if err := tracker.Replace(nil); err != nil {
 		t.Fatalf("Replace() removing target error = %v", err)
 	}
 	if err := tracker.Replace([]url.URL{target}); err != nil {

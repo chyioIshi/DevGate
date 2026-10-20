@@ -414,7 +414,7 @@ func TestHealthTrackerReplaceStartsNewEndpointHealthy(t *testing.T) {
 	}
 }
 
-func TestHealthTrackerReplaceRejectsEmptySnapshot(t *testing.T) {
+func TestHealthTrackerReplaceAcceptsEmptySnapshot(t *testing.T) {
 	t.Parallel()
 
 	endpoint := url.URL{Scheme: "http", Host: "upstream.example"}
@@ -422,15 +422,25 @@ func TestHealthTrackerReplaceRejectsEmptySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewHealthTracker() error = %v", err)
 	}
-	originalState := tracker.healthByTarget[endpoint.String()]
-
-	if err := tracker.Replace(nil); err == nil {
-		t.Fatal("Replace(nil) error = nil, want an error")
+	if err := tracker.Replace(nil); err != nil {
+		t.Fatalf("Replace(nil) error = %v", err)
 	}
 
-	assertEndpointURLs(t, tracker.HealthyEndpoints(), []url.URL{endpoint})
-	if got := tracker.healthByTarget[endpoint.String()]; got != originalState {
-		t.Error("failed Replace() changed the endpoint health state")
+	if got := tracker.HealthyEndpoints(); len(got) != 0 {
+		t.Errorf("HealthyEndpoints() = %v, want empty", got)
+	}
+	if got := tracker.Targets(); len(got) != 0 {
+		t.Errorf("Targets() = %v, want empty", got)
+	}
+	if _, exists := tracker.healthByTarget[endpoint.String()]; exists {
+		t.Error("Replace(nil) retained removed endpoint state")
+	}
+	if changed, tracked := tracker.RecordFailure(endpoint); changed || tracked {
+		t.Errorf(
+			"RecordFailure() = (%t, %t), want (false, false)",
+			changed,
+			tracked,
+		)
 	}
 }
 
