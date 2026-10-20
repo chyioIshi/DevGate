@@ -158,6 +158,10 @@ func routeRuntimeFromRoutes(
 					)
 				}
 
+				endpointMembership := upstream.NewEndpointMembership(
+					route.Upstream.Endpoints,
+				)
+
 				activeHealthTracker, err := newRouteActiveHealthTracker(
 					route.Upstream,
 				)
@@ -179,23 +183,20 @@ func routeRuntimeFromRoutes(
 					)
 				}
 
-				selectedTargetPicker := proxy.TargetPicker(targetPicker)
-				var healthAwarePicker *upstream.HealthAwarePicker
-				if activeHealthTracker != nil || passiveHealthTracker != nil {
-					healthAwarePicker, err = newRouteHealthAwarePicker(
-						targetPicker,
-						activeHealthTracker,
-						passiveHealthTracker,
+				healthAwarePicker, err := newRouteHealthAwarePicker(
+					targetPicker,
+					endpointMembership,
+					activeHealthTracker,
+					passiveHealthTracker,
+				)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"configure health-aware picker for route %q: %w",
+						route.Name,
+						err,
 					)
-					if err != nil {
-						return nil, fmt.Errorf(
-							"configure health-aware picker for route %q: %w",
-							route.Name,
-							err,
-						)
-					}
-					selectedTargetPicker = healthAwarePicker
 				}
+				selectedTargetPicker := healthAwarePicker
 
 				if activeHealthTracker != nil {
 					activeHealthChecker, err := newRouteActiveHealthChecker(
@@ -373,22 +374,35 @@ func routeRuntimeFromRoutes(
 
 func newRouteHealthAwarePicker(
 	base replaceableTargetPicker,
+	endpointMembership *upstream.EndpointMembership,
 	activeTracker *upstream.HealthTracker,
 	passiveTracker *upstream.PassiveHealthTracker,
 ) (*upstream.HealthAwarePicker, error) {
-	if activeTracker == nil && passiveTracker == nil {
-		return nil, errors.New("both active and passive health trackers cannot be nil")
+	if endpointMembership == nil {
+		return nil, errors.New("endpoint membership was not provided")
 	}
 	var healthSource *upstream.CompositeHealthSource
 	var err error
 
 	switch {
+	case activeTracker == nil && passiveTracker == nil:
+		healthSource, err = upstream.NewCompositeHealthSource(endpointMembership)
 	case activeTracker == nil:
-		healthSource, err = upstream.NewCompositeHealthSource(passiveTracker)
+		healthSource, err = upstream.NewCompositeHealthSource(
+			endpointMembership,
+			passiveTracker,
+		)
 	case passiveTracker == nil:
-		healthSource, err = upstream.NewCompositeHealthSource(activeTracker)
+		healthSource, err = upstream.NewCompositeHealthSource(
+			endpointMembership,
+			activeTracker,
+		)
 	default:
-		healthSource, err = upstream.NewCompositeHealthSource(activeTracker, passiveTracker)
+		healthSource, err = upstream.NewCompositeHealthSource(
+			endpointMembership,
+			activeTracker,
+			passiveTracker,
+		)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create composite health source: %w", err)
