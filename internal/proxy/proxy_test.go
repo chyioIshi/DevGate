@@ -127,6 +127,129 @@ func TestReverseProxySelectsTargetForEachRequest(t *testing.T) {
 	}
 }
 
+func TestReverseProxyKeepsInFlightRequestAfterEndpointRemoval(t *testing.T) {
+	const signalTimeout = 5 * time.Second
+
+	removedTargetURL, err := url.Parse("http://192.0.2.10:8080")
+	if err != nil {
+		t.Fatalf("parse removable target URL: %v", err)
+	}
+	replacementTargetURL, err := url.Parse("http://192.0.2.11:8080")
+	if err != nil {
+		t.Fatalf("parse replacement target URL: %v", err)
+	}
+	removedTarget := *removedTargetURL
+	replacementTarget := *replacementTargetURL
+	picker, err := upstream.NewRoundRobin([]url.URL{removedTarget})
+	if err != nil {
+		t.Fatalf("create round-robin picker: %v", err)
+	}
+
+	requestTargets := make(chan string, 2)
+	removedRequestStarted := make(chan struct{})
+	releaseRemovedRequest := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseRemovedRequest)
+		})
+	}
+	defer release()
+
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requestTargets <- request.URL.Host
+		if request.URL.Host == removedTarget.Host {
+			close(removedRequestStarted)
+			select {
+			case <-releaseRemovedRequest:
+			case <-request.Context().Done():
+				return nil, request.Context().Err()
+			}
+		}
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Header:     make(http.Header),
+			Body:       http.NoBody,
+			Request:    request,
+		}, nil
+	})
+	handler := New(
+		picker,
+		transport,
+		nil,
+		nil,
+		nil,
+		nil,
+		slog.New(slog.DiscardHandler),
+	)
+
+	firstResponse := make(chan int, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(
+			recorder,
+			httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil),
+		)
+		firstResponse <- recorder.Code
+	}()
+
+	select {
+	case <-removedRequestStarted:
+	case <-time.After(signalTimeout):
+		t.Fatal("request to the removable endpoint did not start")
+	}
+	if got := <-requestTargets; got != removedTarget.Host {
+		t.Fatalf("first request target = %q, want %q", got, removedTarget.Host)
+	}
+
+	if err := picker.Replace([]url.URL{replacementTarget}); err != nil {
+		t.Fatalf("replace endpoint snapshot: %v", err)
+	}
+
+	secondResponse := make(chan int, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(
+			recorder,
+			httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil),
+		)
+		secondResponse <- recorder.Code
+	}()
+
+	select {
+	case got := <-requestTargets:
+		if got != replacementTarget.Host {
+			t.Errorf("second request target = %q, want %q", got, replacementTarget.Host)
+		}
+	case <-time.After(signalTimeout):
+		t.Fatal("request was not sent to the replacement endpoint")
+	}
+	select {
+	case code := <-secondResponse:
+		if code != http.StatusNoContent {
+			t.Errorf("second response status = %d, want %d", code, http.StatusNoContent)
+		}
+	case <-time.After(signalTimeout):
+		t.Fatal("request to the replacement endpoint did not finish")
+	}
+
+	select {
+	case code := <-firstResponse:
+		t.Fatalf("in-flight request finished before release with status %d", code)
+	default:
+	}
+
+	release()
+	select {
+	case code := <-firstResponse:
+		if code != http.StatusNoContent {
+			t.Errorf("first response status = %d, want %d", code, http.StatusNoContent)
+		}
+	case <-time.After(signalTimeout):
+		t.Fatal("in-flight request did not finish after release")
+	}
+}
+
 func TestReverseProxyForwardsRequest(t *testing.T) {
 	const upstreamRequestID = "upstream-controlled-value"
 	const transformRequestID = "transform-controlled-value"
