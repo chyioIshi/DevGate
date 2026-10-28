@@ -89,12 +89,21 @@ type UpstreamConfig struct {
 // UpstreamDiscoveryConfig selects one source of upstream endpoints.
 type UpstreamDiscoveryConfig struct {
 	Static *StaticUpstreamDiscoveryConfig `yaml:"static"`
+	DNS    *DNSUpstreamDiscoveryConfig    `yaml:"dns"`
 }
 
 // StaticUpstreamDiscoveryConfig defines endpoints supplied directly in the
 // configuration file.
 type StaticUpstreamDiscoveryConfig struct {
 	Endpoints []UpstreamEndpointConfig `yaml:"endpoints"`
+}
+
+// DNSUpstreamDiscoveryConfig defines one logical HTTP target that is
+// periodically resolved into concrete IP-based endpoints.
+type DNSUpstreamDiscoveryConfig struct {
+	URL             string        `yaml:"url"`
+	RefreshInterval time.Duration `yaml:"refresh_interval"`
+	LookupTimeout   time.Duration `yaml:"lookup_timeout"`
 }
 
 // UpstreamEndpointConfig identifies one statically configured upstream

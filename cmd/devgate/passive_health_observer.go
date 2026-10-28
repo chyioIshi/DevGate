@@ -25,7 +25,7 @@ type routePassiveHealthObserver struct {
 }
 
 var _ upstream.PassiveHealthObserver = (*routePassiveHealthObserver)(nil)
-var _ healthRunner = (*routePassiveHealthObserver)(nil)
+var _ backgroundRunner = (*routePassiveHealthObserver)(nil)
 
 func newRoutePassiveHealthObserver(
 	routeName string,

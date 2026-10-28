@@ -40,6 +40,7 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 	activeHealthCheckMetrics := metrics.NewActiveHealthCheck(registry)
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
+		nil,
 		dataTransport,
 		&http.Client{Transport: probeTransport},
 		testCircuitFailureThreshold,
@@ -48,6 +49,7 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 		newTestRateLimiterMetrics(),
 		activeHealthCheckMetrics,
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -69,8 +71,8 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 		)
 	}
 
-	stopHealthRunners := runtime.startHealthRunners(context.Background())
-	defer stopHealthRunners()
+	stopBackgroundRunners := runtime.startBackgroundRunners(context.Background())
+	defer stopBackgroundRunners()
 	waitForProbeCall(t, probeTransport.called)
 
 	waitForServiceUnavailable(t, handler)

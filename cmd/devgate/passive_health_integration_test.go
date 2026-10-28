@@ -119,6 +119,7 @@ func TestPassiveHealthCheckFailsClosedAfterEndpointEjection(t *testing.T) {
 	passiveHealthMetrics := metrics.NewPassiveHealth(registry)
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
+		nil,
 		transport,
 		nil,
 		10,
@@ -127,6 +128,7 @@ func TestPassiveHealthCheckFailsClosedAfterEndpointEjection(t *testing.T) {
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		passiveHealthMetrics,
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -196,6 +198,7 @@ func TestCircuitBreakerRejectionDoesNotEjectPassiveEndpoint(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
+		nil,
 		transport,
 		nil,
 		1,
@@ -204,6 +207,7 @@ func TestCircuitBreakerRejectionDoesNotEjectPassiveEndpoint(t *testing.T) {
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		logger,
 	)
@@ -259,6 +263,7 @@ func newPassiveRetryTestHandler(
 	}
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
+		nil,
 		transport,
 		nil,
 		10,
@@ -267,6 +272,7 @@ func newPassiveRetryTestHandler(
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		discardLogger(),
 	)

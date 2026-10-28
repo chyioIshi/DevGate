@@ -123,9 +123,6 @@ func upstreamFromConfig(routeConfig config.RouteConfig) (*router.Upstream, error
 		if routeConfig.Upstream.Discovery == nil {
 			return nil, fmt.Errorf("no discovery configuration for upstream of route %q", routeConfig.Name)
 		}
-		if routeConfig.Upstream.Discovery.Static == nil {
-			return nil, fmt.Errorf("no static discovery configuration for upstream of route %q", routeConfig.Name)
-		}
 		var loadBalancing router.LoadBalancingPolicy
 		switch routeConfig.Upstream.LoadBalancing {
 		case "", config.LoadBalancingPolicyRoundRobin:
@@ -143,19 +140,51 @@ func upstreamFromConfig(routeConfig config.RouteConfig) (*router.Upstream, error
 		}
 		routeUpstream := &router.Upstream{
 			LoadBalancing: loadBalancing,
-			Endpoints:     make([]url.URL, len(routeConfig.Upstream.Discovery.Static.Endpoints)),
 		}
-		for i, endpointConfig := range routeConfig.Upstream.Discovery.Static.Endpoints {
-			parsedEndpoint, err := url.Parse(endpointConfig.URL)
+		discovery := routeConfig.Upstream.Discovery
+
+		switch {
+		case discovery.Static != nil && discovery.DNS != nil:
+			return nil, fmt.Errorf(
+				"multiple discovery configurations for upstream of route %q",
+				routeConfig.Name,
+			)
+		case discovery.Static == nil && discovery.DNS == nil:
+			return nil, fmt.Errorf(
+				"no discovery source for upstream of route %q",
+				routeConfig.Name,
+			)
+		case discovery.DNS != nil:
+			routeUpstream.DNSDiscovery = &router.DNSDiscoveryPolicy{
+				RefreshInterval: discovery.DNS.RefreshInterval,
+				LookupTimeout:   discovery.DNS.LookupTimeout,
+			}
+			parsedEndpoint, err := url.Parse(discovery.DNS.URL)
 			if err != nil {
 				return nil, fmt.Errorf(
-					"parse upstream endpoint [%d] for route %q: %w",
-					i,
+					"parse DNS discovery URL for route %q: %w",
 					routeConfig.Name,
 					err,
 				)
 			}
-			routeUpstream.Endpoints[i] = *parsedEndpoint
+			routeUpstream.Endpoints = []url.URL{*parsedEndpoint}
+		case discovery.Static != nil:
+			routeUpstream.Endpoints = make(
+				[]url.URL,
+				len(discovery.Static.Endpoints),
+			)
+			for i, endpointConfig := range discovery.Static.Endpoints {
+				parsedEndpoint, err := url.Parse(endpointConfig.URL)
+				if err != nil {
+					return nil, fmt.Errorf(
+						"parse upstream endpoint [%d] for route %q: %w",
+						i,
+						routeConfig.Name,
+						err,
+					)
+				}
+				routeUpstream.Endpoints[i] = *parsedEndpoint
+			}
 		}
 		activeHealthCheck := activeHealthCheckPolicyFromConfig(
 			routeConfig.Upstream.ActiveHealthCheck,

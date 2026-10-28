@@ -71,3 +71,14 @@ routes:
     protocol: http
     path_prefix: /
     upstream_url: http://frontend-service:8080
+
+  - name: catalog
+    protocol: http
+    path_prefix: /api/catalog
+    upstream:
+      load_balancing: round_robin
+      discovery:
+        dns:
+          url: http://catalog.service.local:8080
+          refresh_interval: 30s
+          lookup_timeout: 2s
