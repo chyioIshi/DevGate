@@ -28,6 +28,10 @@ const (
 	envMaxHeaderBytes                  = "DEVGATE_MAX_HEADER_BYTES"
 	envIdleTimeout                     = "DEVGATE_IDLE_TIMEOUT"
 	envShutdownTimeout                 = "DEVGATE_SHUTDOWN_TIMEOUT"
+	envUpstreamMaxIdleConns            = "DEVGATE_UPSTREAM_MAX_IDLE_CONNS"
+	envUpstreamMaxIdleConnsPerHost     = "DEVGATE_UPSTREAM_MAX_IDLE_CONNS_PER_HOST"
+	envUpstreamMaxConnsPerHost         = "DEVGATE_UPSTREAM_MAX_CONNS_PER_HOST"
+	envUpstreamIdleConnTimeout         = "DEVGATE_UPSTREAM_IDLE_CONN_TIMEOUT"
 	envUpstreamResponseHeaderTimeout   = "DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"
 	envUpstreamMaxAttempts             = "DEVGATE_UPSTREAM_MAX_ATTEMPTS"
 	envUpstreamRetryBaseDelay          = "DEVGATE_UPSTREAM_RETRY_BASE_DELAY"
@@ -45,6 +49,10 @@ var configEnvKeys = []string{
 	envMaxHeaderBytes,
 	envIdleTimeout,
 	envShutdownTimeout,
+	envUpstreamMaxIdleConns,
+	envUpstreamMaxIdleConnsPerHost,
+	envUpstreamMaxConnsPerHost,
+	envUpstreamIdleConnTimeout,
 	envUpstreamResponseHeaderTimeout,
 	envUpstreamMaxAttempts,
 	envUpstreamRetryBaseDelay,
@@ -74,6 +82,10 @@ func TestLoadDefaults(t *testing.T) {
 		MaxHeaderBytes:                  64 * 1024,
 		IdleTimeout:                     60 * time.Second,
 		ShutdownTimeout:                 10 * time.Second,
+		UpstreamMaxIdleConns:            100,
+		UpstreamMaxIdleConnsPerHost:     20,
+		UpstreamMaxConnsPerHost:         100,
+		UpstreamIdleConnTimeout:         90 * time.Second,
 		UpstreamResponseHeaderTimeout:   10 * time.Second,
 		UpstreamMaxAttempts:             2,
 		UpstreamRetryBaseDelay:          100 * time.Millisecond,
@@ -96,6 +108,10 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envMaxHeaderBytes, "32768")
 	t.Setenv(envIdleTimeout, "45s")
 	t.Setenv(envShutdownTimeout, "7s")
+	t.Setenv(envUpstreamMaxIdleConns, "200")
+	t.Setenv(envUpstreamMaxIdleConnsPerHost, "40")
+	t.Setenv(envUpstreamMaxConnsPerHost, "150")
+	t.Setenv(envUpstreamIdleConnTimeout, "30s")
 	t.Setenv(envUpstreamResponseHeaderTimeout, "3s")
 	t.Setenv(envUpstreamMaxAttempts, "4")
 	t.Setenv(envUpstreamRetryBaseDelay, "250ms")
@@ -118,6 +134,10 @@ func TestLoadOverrides(t *testing.T) {
 		MaxHeaderBytes:                  32 * 1024,
 		IdleTimeout:                     45 * time.Second,
 		ShutdownTimeout:                 7 * time.Second,
+		UpstreamMaxIdleConns:            200,
+		UpstreamMaxIdleConnsPerHost:     40,
+		UpstreamMaxConnsPerHost:         150,
+		UpstreamIdleConnTimeout:         30 * time.Second,
 		UpstreamResponseHeaderTimeout:   3 * time.Second,
 		UpstreamMaxAttempts:             4,
 		UpstreamRetryBaseDelay:          250 * time.Millisecond,
@@ -342,6 +362,18 @@ func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 			wantMessage: "upstream response header timeout must be positive",
 		},
 		{
+			name:        "zero upstream idle connection timeout",
+			envKey:      envUpstreamIdleConnTimeout,
+			envValue:    "0s",
+			wantMessage: "upstream idle connection timeout must be positive",
+		},
+		{
+			name:        "negative upstream idle connection timeout",
+			envKey:      envUpstreamIdleConnTimeout,
+			envValue:    "-1s",
+			wantMessage: "upstream idle connection timeout must be positive",
+		},
+		{
 			name:        "negative upstream response header timeout",
 			envKey:      envUpstreamResponseHeaderTimeout,
 			envValue:    "-1s",
@@ -392,6 +424,52 @@ func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 				t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsNonPositiveUpstreamConnectionLimits(t *testing.T) {
+	tests := []struct {
+		name        string
+		envKey      string
+		wantMessage string
+	}{
+		{
+			name:        "max idle connections",
+			envKey:      envUpstreamMaxIdleConns,
+			wantMessage: "upstream max idle connections must be positive",
+		},
+		{
+			name:        "max idle connections per host",
+			envKey:      envUpstreamMaxIdleConnsPerHost,
+			wantMessage: "upstream max idle connections per host must be positive",
+		},
+		{
+			name:        "max connections per host",
+			envKey:      envUpstreamMaxConnsPerHost,
+			wantMessage: "upstream max connections per host must be positive",
+		},
+	}
+
+	for _, test := range tests {
+		for _, value := range []string{"0", "-1"} {
+			t.Run(test.name+"/"+value, func(t *testing.T) {
+				clearConfigEnv(t)
+				t.Setenv(test.envKey, value)
+
+				got, err := Load()
+				if err == nil {
+					t.Fatal("Load() error = nil, want validation error")
+				}
+
+				assertZeroConfig(t, got)
+				if !strings.Contains(err.Error(), "validate config") {
+					t.Errorf("Load() error = %q, want validation context", err)
+				}
+				if !strings.Contains(err.Error(), test.wantMessage) {
+					t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
+				}
+			})
+		}
 	}
 }
 
@@ -556,6 +634,10 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.MaxHeaderBytes != want.MaxHeaderBytes ||
 		got.IdleTimeout != want.IdleTimeout ||
 		got.ShutdownTimeout != want.ShutdownTimeout ||
+		got.UpstreamMaxIdleConns != want.UpstreamMaxIdleConns ||
+		got.UpstreamMaxIdleConnsPerHost != want.UpstreamMaxIdleConnsPerHost ||
+		got.UpstreamMaxConnsPerHost != want.UpstreamMaxConnsPerHost ||
+		got.UpstreamIdleConnTimeout != want.UpstreamIdleConnTimeout ||
 		got.UpstreamResponseHeaderTimeout != want.UpstreamResponseHeaderTimeout ||
 		got.UpstreamMaxAttempts != want.UpstreamMaxAttempts ||
 		got.UpstreamRetryBaseDelay != want.UpstreamRetryBaseDelay ||
@@ -612,6 +694,10 @@ func validConfigForTest() Config {
 		ConfigFile:                      "devgate.yaml",
 		LogFormat:                       LogFormatText,
 		LogLevel:                        LogLevelInfo,
+		UpstreamMaxIdleConns:            100,
+		UpstreamMaxIdleConnsPerHost:     20,
+		UpstreamMaxConnsPerHost:         100,
+		UpstreamIdleConnTimeout:         90 * time.Second,
 		UpstreamResponseHeaderTimeout:   10 * time.Second,
 		UpstreamMaxAttempts:             2,
 		UpstreamRetryBaseDelay:          100 * time.Millisecond,

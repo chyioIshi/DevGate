@@ -1109,7 +1109,9 @@ func TestReverseProxyReturnsGatewayTimeoutWhenResponseHeadersAreLate(t *testing.
 	if err != nil {
 		t.Fatalf("parse upstream URL: %v", err)
 	}
-	transport, err := NewTransport(100 * time.Millisecond)
+	transportConfig := validTransportConfig()
+	transportConfig.ResponseHeaderTimeout = 100 * time.Millisecond
+	transport, err := NewTransport(transportConfig)
 	if err != nil {
 		t.Fatalf("NewTransport() error = %v", err)
 	}
@@ -1158,7 +1160,9 @@ func TestReverseProxyRetriesGETAfterResponseHeaderTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse upstream URL: %v", err)
 	}
-	baseTransport, err := NewTransport(100 * time.Millisecond)
+	transportConfig := validTransportConfig()
+	transportConfig.ResponseHeaderTimeout = 100 * time.Millisecond
+	baseTransport, err := NewTransport(transportConfig)
 	if err != nil {
 		t.Fatalf("NewTransport() error = %v", err)
 	}

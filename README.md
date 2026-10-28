@@ -115,6 +115,23 @@ The legacy `upstream_url` field remains supported for single-endpoint routes.
 DevGate normalizes it internally to a round-robin pool containing one endpoint.
 `upstream` and `upstream_url` are mutually exclusive.
 
+### Connection pooling
+
+DevGate reuses upstream HTTP connections through a shared keep-alive pool.
+Its capacity and idle lifetime can be configured with environment variables:
+
+```dotenv
+DEVGATE_UPSTREAM_MAX_IDLE_CONNS=100
+DEVGATE_UPSTREAM_MAX_IDLE_CONNS_PER_HOST=20
+DEVGATE_UPSTREAM_MAX_CONNS_PER_HOST=100
+DEVGATE_UPSTREAM_IDLE_CONN_TIMEOUT=90s
+```
+
+`MAX_IDLE_CONNS` limits idle connections across all upstream hosts, while
+`MAX_IDLE_CONNS_PER_HOST` limits idle connections retained for one host.
+`MAX_CONNS_PER_HOST` bounds active, idle, and dialing connections for each
+host. All limits and the idle timeout must be positive.
+
 ### DNS discovery
 
 A route can periodically resolve one logical HTTP target into an endpoint for

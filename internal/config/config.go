@@ -33,6 +33,10 @@ type Config struct {
 	Routes                          []RouteConfig
 	LogFormat                       LogFormat      `env:"DEVGATE_LOG_FORMAT"`
 	LogLevel                        LogLevel       `env:"DEVGATE_LOG_LEVEL"`
+	UpstreamMaxIdleConns            int            `env:"DEVGATE_UPSTREAM_MAX_IDLE_CONNS"`
+	UpstreamMaxIdleConnsPerHost     int            `env:"DEVGATE_UPSTREAM_MAX_IDLE_CONNS_PER_HOST"`
+	UpstreamMaxConnsPerHost         int            `env:"DEVGATE_UPSTREAM_MAX_CONNS_PER_HOST"`
+	UpstreamIdleConnTimeout         time.Duration  `env:"DEVGATE_UPSTREAM_IDLE_CONN_TIMEOUT"`
 	UpstreamResponseHeaderTimeout   time.Duration  `env:"DEVGATE_UPSTREAM_RESPONSE_HEADER_TIMEOUT"`
 	UpstreamMaxAttempts             int            `env:"DEVGATE_UPSTREAM_MAX_ATTEMPTS"`
 	UpstreamRetryBaseDelay          time.Duration  `env:"DEVGATE_UPSTREAM_RETRY_BASE_DELAY"`
@@ -70,6 +74,18 @@ func (c Config) validate() error {
 	case LogLevelInfo, LogLevelWarn, LogLevelError, LogLevelDebug:
 	default:
 		return fmt.Errorf("invalid log level: %q, must be 'info', 'warn', 'error', 'debug'", c.LogLevel)
+	}
+	if c.UpstreamMaxIdleConns <= 0 {
+		return errors.New("upstream max idle connections must be positive")
+	}
+	if c.UpstreamMaxIdleConnsPerHost <= 0 {
+		return errors.New("upstream max idle connections per host must be positive")
+	}
+	if c.UpstreamMaxConnsPerHost <= 0 {
+		return errors.New("upstream max connections per host must be positive")
+	}
+	if c.UpstreamIdleConnTimeout <= 0 {
+		return errors.New("upstream idle connection timeout must be positive")
 	}
 	if c.UpstreamResponseHeaderTimeout <= 0 {
 		return errors.New("upstream response header timeout must be positive")
@@ -120,6 +136,10 @@ func Load() (Config, error) {
 		ConfigFile:                      "devgate.yaml",
 		LogFormat:                       LogFormatText,
 		LogLevel:                        LogLevelInfo,
+		UpstreamMaxIdleConns:            100,
+		UpstreamMaxIdleConnsPerHost:     20,
+		UpstreamMaxConnsPerHost:         100,
+		UpstreamIdleConnTimeout:         90 * time.Second,
 		UpstreamResponseHeaderTimeout:   10 * time.Second,
 		UpstreamMaxAttempts:             2,
 		UpstreamRetryBaseDelay:          100 * time.Millisecond,
