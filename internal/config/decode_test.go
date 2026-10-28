@@ -262,6 +262,50 @@ routes:
 	}
 }
 
+func TestDecodeConfigDNSDiscovery(t *testing.T) {
+	t.Parallel()
+
+	input := `
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /users
+    upstream:
+      load_balancing: round_robin
+      discovery:
+        dns:
+          url: http://users.service.local:8080/api
+          refresh_interval: 30s
+          lookup_timeout: 2s
+`
+
+	got, err := decodeConfig(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("decodeConfig() error = %v", err)
+	}
+	if len(got.Routes) != 1 {
+		t.Fatalf("decodeConfig() route count = %d, want 1", len(got.Routes))
+	}
+	if got.Routes[0].Upstream == nil {
+		t.Fatal("decodeConfig() upstream = nil, want non-nil")
+	}
+	if got.Routes[0].Upstream.Discovery == nil {
+		t.Fatal("decodeConfig() discovery = nil, want non-nil")
+	}
+	dns := got.Routes[0].Upstream.Discovery.DNS
+	if dns == nil {
+		t.Fatal("decodeConfig() DNS discovery = nil, want non-nil")
+	}
+	want := DNSUpstreamDiscoveryConfig{
+		URL:             "http://users.service.local:8080/api",
+		RefreshInterval: 30 * time.Second,
+		LookupTimeout:   2 * time.Second,
+	}
+	if !reflect.DeepEqual(*dns, want) {
+		t.Errorf("decodeConfig() DNS discovery = %+v, want %+v", *dns, want)
+	}
+}
+
 func TestDecodeConfigActiveHealthCheck(t *testing.T) {
 	input := `
 routes:
@@ -377,6 +421,16 @@ func TestDecodeConfigRejectsUnknownUpstreamFields(t *testing.T) {
         static:
           unknown_static: value`,
 			unknownField: "unknown_static",
+		},
+		{
+			name: "DNS discovery",
+			upstreamYAML: `
+      load_balancing: round_robin
+      discovery:
+        dns:
+          url: http://users.service.local:8080
+          unknown_dns: value`,
+			unknownField: "unknown_dns",
 		},
 		{
 			name: "endpoint",

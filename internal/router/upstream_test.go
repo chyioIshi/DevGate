@@ -48,6 +48,93 @@ func TestUpstreamValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "valid DNS discovery",
+			upstream: Upstream{
+				LoadBalancing: LoadBalancingPolicyRoundRobin,
+				Endpoints: []url.URL{
+					{Scheme: "http", Host: "api.example.com:8080"},
+				},
+				DNSDiscovery: &DNSDiscoveryPolicy{
+					RefreshInterval: 30 * time.Second,
+					LookupTimeout:   2 * time.Second,
+				},
+			},
+		},
+		{
+			name: "DNS discovery with multiple logical endpoints",
+			upstream: Upstream{
+				LoadBalancing: LoadBalancingPolicyRoundRobin,
+				Endpoints: []url.URL{
+					{Scheme: "http", Host: "api-1.example.com"},
+					{Scheme: "http", Host: "api-2.example.com"},
+				},
+				DNSDiscovery: &DNSDiscoveryPolicy{
+					RefreshInterval: 30 * time.Second,
+					LookupTimeout:   2 * time.Second,
+				},
+			},
+			wantErr:     true,
+			errContains: []string{"DNS discovery", "exactly one"},
+		},
+		{
+			name: "DNS discovery with HTTPS endpoint",
+			upstream: Upstream{
+				LoadBalancing: LoadBalancingPolicyRoundRobin,
+				Endpoints: []url.URL{
+					{Scheme: "https", Host: "api.example.com"},
+				},
+				DNSDiscovery: &DNSDiscoveryPolicy{
+					RefreshInterval: 30 * time.Second,
+					LookupTimeout:   2 * time.Second,
+				},
+			},
+			wantErr:     true,
+			errContains: []string{"DNS discovery", "http scheme"},
+		},
+		{
+			name: "DNS discovery with non-positive refresh interval",
+			upstream: Upstream{
+				LoadBalancing: LoadBalancingPolicyRoundRobin,
+				Endpoints: []url.URL{
+					{Scheme: "http", Host: "api.example.com"},
+				},
+				DNSDiscovery: &DNSDiscoveryPolicy{
+					LookupTimeout: 2 * time.Second,
+				},
+			},
+			wantErr:     true,
+			errContains: []string{"DNS refresh interval", "positive"},
+		},
+		{
+			name: "DNS discovery with non-positive lookup timeout",
+			upstream: Upstream{
+				LoadBalancing: LoadBalancingPolicyRoundRobin,
+				Endpoints: []url.URL{
+					{Scheme: "http", Host: "api.example.com"},
+				},
+				DNSDiscovery: &DNSDiscoveryPolicy{
+					RefreshInterval: 30 * time.Second,
+				},
+			},
+			wantErr:     true,
+			errContains: []string{"DNS lookup timeout", "positive"},
+		},
+		{
+			name: "DNS discovery with generally invalid endpoint scheme",
+			upstream: Upstream{
+				LoadBalancing: LoadBalancingPolicyRoundRobin,
+				Endpoints: []url.URL{
+					{Scheme: "ftp", Host: "api.example.com"},
+				},
+				DNSDiscovery: &DNSDiscoveryPolicy{
+					RefreshInterval: 30 * time.Second,
+					LookupTimeout:   2 * time.Second,
+				},
+			},
+			wantErr:     true,
+			errContains: []string{"upstream endpoint [0]", "valid scheme"},
+		},
+		{
 			name: "unsupported load balancing policy",
 			upstream: Upstream{
 				LoadBalancing: "least_connections",

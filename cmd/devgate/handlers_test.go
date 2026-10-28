@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -35,6 +36,7 @@ func handlersFromRoutes(
 ) (map[string]http.Handler, error) {
 	runtime, err := routeRuntimeFromRoutes(
 		routes,
+		nil,
 		transport,
 		nil,
 		circuitFailureThreshold,
@@ -43,6 +45,7 @@ func handlersFromRoutes(
 		rateLimiterMetrics,
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		trustedCIDRs,
 		logger,
 	)
@@ -120,6 +123,174 @@ func TestHandlersFromRoutesCreatesHTTPHandlers(t *testing.T) {
 	}
 }
 
+func TestRouteRuntimeDNSDiscoveryStartsFailClosed(t *testing.T) {
+	t.Parallel()
+
+	transport := &countingRoundTripper{}
+	logicalTarget := *mustParseRouteURL(t, "http://users.service.local:8080")
+	route := router.Route{
+		Name:       "users",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/users",
+		Upstream: &router.Upstream{
+			LoadBalancing: router.LoadBalancingPolicyRoundRobin,
+			Endpoints:     []url.URL{logicalTarget},
+			DNSDiscovery: &router.DNSDiscoveryPolicy{
+				RefreshInterval: time.Minute,
+				LookupTimeout:   time.Second,
+			},
+		},
+	}
+	resolver := routeEndpointResolverFunc(func(
+		context.Context,
+		url.URL,
+	) ([]url.URL, error) {
+		t.Fatal("resolver called before background runners were started")
+		return nil, nil
+	})
+
+	runtime, err := routeRuntimeFromRoutes(
+		[]router.Route{route},
+		resolver,
+		transport,
+		nil,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	if got := len(runtime.backgroundRunners); got != 1 {
+		t.Fatalf("background runner count = %d, want 1", got)
+	}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+	runtime.handlers[route.Name].ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Errorf(
+			"response status = %d, want %d",
+			recorder.Code,
+			http.StatusServiceUnavailable,
+		)
+	}
+	if transport.calls != 0 {
+		t.Errorf("upstream transport calls = %d, want 0", transport.calls)
+	}
+}
+
+func TestRouteRuntimeDNSDiscoveryPublishesResolvedEndpoints(t *testing.T) {
+	t.Parallel()
+
+	transport := &countingRoundTripper{}
+	logicalTarget := *mustParseRouteURL(t, "http://users.service.local:8080/api")
+	resolvedTarget := *mustParseRouteURL(t, "http://192.0.2.10:8080/api")
+	dnsMetricsRegistry := prometheus.NewRegistry()
+	dnsDiscoveryMetrics := metrics.NewDNSDiscovery(dnsMetricsRegistry)
+	resolved := make(chan struct{})
+	resolver := routeEndpointResolverFunc(func(
+		context.Context,
+		url.URL,
+	) ([]url.URL, error) {
+		close(resolved)
+		return []url.URL{resolvedTarget}, nil
+	})
+	route := router.Route{
+		Name:       "users",
+		Protocol:   router.ProtocolHTTP,
+		PathPrefix: "/users",
+		Upstream: &router.Upstream{
+			LoadBalancing: router.LoadBalancingPolicyRoundRobin,
+			Endpoints:     []url.URL{logicalTarget},
+			DNSDiscovery: &router.DNSDiscoveryPolicy{
+				RefreshInterval: time.Minute,
+				LookupTimeout:   time.Second,
+			},
+		},
+	}
+	runtime, err := routeRuntimeFromRoutes(
+		[]router.Route{route},
+		resolver,
+		transport,
+		nil,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
+		dnsDiscoveryMetrics,
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	stop := runtime.startBackgroundRunners(context.Background())
+	defer stop()
+	waitForRuntimeSignal(t, resolved, "DNS resolver was not called")
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "http://gateway.local/users", nil)
+		runtime.handlers[route.Name].ServeHTTP(recorder, request)
+		if recorder.Code == http.StatusNoContent {
+			break
+		}
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf(
+				"response status while waiting for DNS snapshot = %d, want %d or %d",
+				recorder.Code,
+				http.StatusServiceUnavailable,
+				http.StatusNoContent,
+			)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("DNS snapshot was not published before timeout")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if len(transport.requests) != 1 {
+		t.Fatalf("upstream transport request count = %d, want 1", len(transport.requests))
+	}
+	if got := transport.requests[0].URL.Host; got != resolvedTarget.Host {
+		t.Errorf("proxied target host = %q, want %q", got, resolvedTarget.Host)
+	}
+
+	const wantMetrics = `
+# HELP devgate_dns_discovery_refreshes_total Total number of DNS discovery refresh attempts.
+# TYPE devgate_dns_discovery_refreshes_total counter
+devgate_dns_discovery_refreshes_total{outcome="success",route="users"} 1
+# HELP devgate_dns_discovery_resolved_endpoints Number of endpoints in the latest successful DNS discovery snapshot.
+# TYPE devgate_dns_discovery_resolved_endpoints gauge
+devgate_dns_discovery_resolved_endpoints{route="users"} 1
+`
+	metricsDeadline := time.Now().Add(time.Second)
+	for {
+		err := testutil.GatherAndCompare(
+			dnsMetricsRegistry,
+			strings.NewReader(wantMetrics),
+		)
+		if err == nil {
+			break
+		}
+		if time.Now().After(metricsDeadline) {
+			t.Fatalf("DNS discovery metrics were not updated before timeout: %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 	t.Parallel()
 
@@ -149,6 +320,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 
 	runtime, err := routeRuntimeFromRoutes(
 		routes,
+		nil,
 		&countingRoundTripper{},
 		&http.Client{Transport: &countingRoundTripper{}},
 		testCircuitFailureThreshold,
@@ -157,6 +329,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -166,7 +339,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 	if got := len(runtime.handlers); got != len(routes) {
 		t.Errorf("handler count = %d, want %d", got, len(routes))
 	}
-	if got := len(runtime.healthRunners); got != 1 {
+	if got := len(runtime.backgroundRunners); got != 1 {
 		t.Errorf("health checker count = %d, want 1", got)
 	}
 }
@@ -188,6 +361,7 @@ func TestRouteRuntimeFromRoutesCollectsPassiveHealthRunner(t *testing.T) {
 
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
+		nil,
 		&countingRoundTripper{},
 		nil,
 		testCircuitFailureThreshold,
@@ -196,13 +370,14 @@ func TestRouteRuntimeFromRoutesCollectsPassiveHealthRunner(t *testing.T) {
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		discardLogger(),
 	)
 	if err != nil {
 		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
 	}
-	if got := len(runtime.healthRunners); got != 1 {
+	if got := len(runtime.backgroundRunners); got != 1 {
 		t.Errorf("health runner count = %d, want 1", got)
 	}
 }
@@ -232,6 +407,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveAndPassiveHealthRunners(t *testing.
 
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
+		nil,
 		&countingRoundTripper{},
 		&http.Client{Transport: &countingRoundTripper{}},
 		testCircuitFailureThreshold,
@@ -240,13 +416,14 @@ func TestRouteRuntimeFromRoutesCollectsActiveAndPassiveHealthRunners(t *testing.
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		discardLogger(),
 	)
 	if err != nil {
 		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
 	}
-	if got := len(runtime.healthRunners); got != 2 {
+	if got := len(runtime.backgroundRunners); got != 2 {
 		t.Errorf("health runner count = %d, want 2", got)
 	}
 }
@@ -272,6 +449,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 
 	runtime, err := routeRuntimeFromRoutes(
 		[]router.Route{route},
+		nil,
 		&countingRoundTripper{},
 		nil,
 		testCircuitFailureThreshold,
@@ -280,6 +458,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
 		nil,
 		discardLogger(),
 	)
@@ -1546,4 +1725,8 @@ func newTestActiveHealthCheckMetrics() *metrics.ActiveHealthCheck {
 
 func newTestPassiveHealthMetrics() *metrics.PassiveHealth {
 	return metrics.NewPassiveHealth(prometheus.NewRegistry())
+}
+
+func newTestDNSDiscoveryMetrics() *metrics.DNSDiscovery {
+	return metrics.NewDNSDiscovery(prometheus.NewRegistry())
 }

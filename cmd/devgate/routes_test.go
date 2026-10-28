@@ -539,6 +539,7 @@ func TestUpstreamFromConfig(t *testing.T) {
 		wantNil       bool
 		wantPolicy    router.LoadBalancingPolicy
 		wantEndpoints []string
+		wantDNS       *router.DNSDiscoveryPolicy
 		wantMessage   string
 	}{
 		{
@@ -617,6 +618,28 @@ func TestUpstreamFromConfig(t *testing.T) {
 			wantEndpoints: []string{"http://server-1:8080", "http://server-2:8080"},
 		},
 		{
+			name: "DNS discovery",
+			route: config.RouteConfig{
+				Name: "users",
+				Upstream: &config.UpstreamConfig{
+					LoadBalancing: config.LoadBalancingPolicyRandom,
+					Discovery: &config.UpstreamDiscoveryConfig{
+						DNS: &config.DNSUpstreamDiscoveryConfig{
+							URL:             "http://users.service.local:8080/api",
+							RefreshInterval: 30 * time.Second,
+							LookupTimeout:   2 * time.Second,
+						},
+					},
+				},
+			},
+			wantPolicy:    router.LoadBalancingPolicyRandom,
+			wantEndpoints: []string{"http://users.service.local:8080/api"},
+			wantDNS: &router.DNSDiscoveryPolicy{
+				RefreshInterval: 30 * time.Second,
+				LookupTimeout:   2 * time.Second,
+			},
+		},
+		{
 			name: "unsupported policy",
 			route: config.RouteConfig{
 				Name:     "users",
@@ -633,14 +656,43 @@ func TestUpstreamFromConfig(t *testing.T) {
 			wantMessage: `no discovery configuration for upstream of route "users"`,
 		},
 		{
-			name: "missing static discovery",
+			name: "missing discovery source",
 			route: config.RouteConfig{
 				Name: "users",
 				Upstream: &config.UpstreamConfig{
 					Discovery: &config.UpstreamDiscoveryConfig{},
 				},
 			},
-			wantMessage: `no static discovery configuration for upstream of route "users"`,
+			wantMessage: `no discovery source for upstream of route "users"`,
+		},
+		{
+			name: "multiple discovery sources",
+			route: config.RouteConfig{
+				Name: "users",
+				Upstream: &config.UpstreamConfig{
+					Discovery: &config.UpstreamDiscoveryConfig{
+						Static: &config.StaticUpstreamDiscoveryConfig{},
+						DNS: &config.DNSUpstreamDiscoveryConfig{
+							URL: "http://users.service.local:8080",
+						},
+					},
+				},
+			},
+			wantMessage: `multiple discovery configurations for upstream of route "users"`,
+		},
+		{
+			name: "invalid DNS discovery URL",
+			route: config.RouteConfig{
+				Name: "users",
+				Upstream: &config.UpstreamConfig{
+					Discovery: &config.UpstreamDiscoveryConfig{
+						DNS: &config.DNSUpstreamDiscoveryConfig{
+							URL: "://broken",
+						},
+					},
+				},
+			},
+			wantMessage: `parse DNS discovery URL for route "users"`,
 		},
 		{
 			name: "invalid second endpoint",
@@ -702,6 +754,13 @@ func TestUpstreamFromConfig(t *testing.T) {
 					"upstreamFromConfig() endpoints = %v, want %v",
 					gotEndpoints,
 					tt.wantEndpoints,
+				)
+			}
+			if !reflect.DeepEqual(got.DNSDiscovery, tt.wantDNS) {
+				t.Errorf(
+					"upstreamFromConfig() DNS discovery = %#v, want %#v",
+					got.DNSDiscovery,
+					tt.wantDNS,
 				)
 			}
 		})
