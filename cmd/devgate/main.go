@@ -61,7 +61,15 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("create DNS resolver: %w", err)
 	}
 
-	upstreamTransport, err := proxy.NewTransport(cfg.UpstreamResponseHeaderTimeout)
+	upstreamTransport, err := proxy.NewTransport(
+		proxy.TransportConfig{
+			MaxIdleConns:          cfg.UpstreamMaxIdleConns,
+			MaxIdleConnsPerHost:   cfg.UpstreamMaxIdleConnsPerHost,
+			MaxConnsPerHost:       cfg.UpstreamMaxConnsPerHost,
+			IdleConnTimeout:       cfg.UpstreamIdleConnTimeout,
+			ResponseHeaderTimeout: cfg.UpstreamResponseHeaderTimeout,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("create upstream transport: %w", err)
 	}
