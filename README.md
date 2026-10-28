@@ -115,6 +115,44 @@ The legacy `upstream_url` field remains supported for single-endpoint routes.
 DevGate normalizes it internally to a round-robin pool containing one endpoint.
 `upstream` and `upstream_url` are mutually exclusive.
 
+### DNS discovery
+
+A route can periodically resolve one logical HTTP target into an endpoint for
+each distinct IPv4 or IPv6 address returned by the system resolver:
+
+```yaml
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream:
+      load_balancing: round_robin
+      discovery:
+        dns:
+          url: http://users.service.local:8080
+          refresh_interval: 30s
+          lookup_timeout: 2s
+```
+
+`static` and `dns` are mutually exclusive. DNS discovery requires exactly one
+logical target and currently supports only the `http` scheme. Its port, path,
+and query are preserved when the hostname is replaced with each resolved IP
+address.
+
+DNS routes start fail-closed: requests receive `503 Service Unavailable` until
+the first successful lookup publishes an endpoint snapshot. A lookup error
+keeps the last successfully applied snapshot. A successful empty DNS response
+publishes an empty snapshot and returns the route to fail-closed behavior.
+Active and passive health state, endpoint membership, and load balancing are
+updated together whenever a new snapshot is published.
+
+DNS discovery exports the following Prometheus metrics:
+
+- `devgate_dns_discovery_refreshes_total{route,outcome}` counts refresh
+  attempts; `outcome` is either `success` or `failure`;
+- `devgate_dns_discovery_resolved_endpoints{route}` reports the number of
+  endpoints in the latest successfully applied snapshot.
+
 ## Active health checks
 
 An upstream pool can periodically probe every configured endpoint:

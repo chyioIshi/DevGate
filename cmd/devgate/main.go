@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/chyioishi/devgate/internal/config"
+	"github.com/chyioishi/devgate/internal/discovery"
 	"github.com/chyioishi/devgate/internal/gateway"
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
@@ -53,6 +55,12 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("build routing table: %w", err)
 	}
+
+	dnsResolver, err := discovery.NewDNSResolver(net.DefaultResolver)
+	if err != nil {
+		return fmt.Errorf("create DNS resolver: %w", err)
+	}
+
 	upstreamTransport, err := proxy.NewTransport(cfg.UpstreamResponseHeaderTimeout)
 	if err != nil {
 		return fmt.Errorf("create upstream transport: %w", err)
@@ -73,10 +81,12 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	rateLimiterMetrics := metrics.NewRateLimiter(promRegistry)
 	activeHealthCheckMetrics := metrics.NewActiveHealthCheck(promRegistry)
 	passiveHealthCheckMetrics := metrics.NewPassiveHealth(promRegistry)
+	dnsDiscoveryMetrics := metrics.NewDNSDiscovery(promRegistry)
 	httpMetrics := metrics.NewHTTP(promRegistry)
 
 	routeRuntime, err := routeRuntimeFromRoutes(
 		routes,
+		dnsResolver,
 		retryTransport,
 		healthCheckClient,
 		cfg.UpstreamCircuitFailureThreshold,
@@ -85,6 +95,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		rateLimiterMetrics,
 		activeHealthCheckMetrics,
 		passiveHealthCheckMetrics,
+		dnsDiscoveryMetrics,
 		cfg.TrustedProxyCIDRs,
 		logger,
 	)
@@ -117,8 +128,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		IdleTimeout:       cfg.IdleTimeout,
 	}
-	stopHealthRunners := routeRuntime.startHealthRunners(ctx)
-	defer stopHealthRunners()
+	stopBackgroundRunners := routeRuntime.startBackgroundRunners(ctx)
+	defer stopBackgroundRunners()
 
 	return serve(ctx, server, logger, cfg.ShutdownTimeout)
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/chyioishi/devgate/internal/directresponse"
+	"github.com/chyioishi/devgate/internal/discovery"
 	"github.com/chyioishi/devgate/internal/errorresponse"
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
@@ -25,17 +26,17 @@ import (
 )
 
 type routeRuntime struct {
-	handlers      map[string]http.Handler
-	healthRunners []healthRunner
+	handlers          map[string]http.Handler
+	backgroundRunners []backgroundRunner
 }
 
-func (r *routeRuntime) startHealthRunners(ctx context.Context) func() {
-	healthRunCtx, cancel := context.WithCancel(ctx)
+func (r *routeRuntime) startBackgroundRunners(ctx context.Context) func() {
+	runCtx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 
-	for _, runner := range r.healthRunners {
+	for _, runner := range r.backgroundRunners {
 		wg.Go(func() {
-			runner.Run(healthRunCtx)
+			runner.Run(runCtx)
 		})
 	}
 
@@ -50,12 +51,13 @@ type replaceableTargetPicker interface {
 	Replace([]url.URL) error
 }
 
-type healthRunner interface {
+type backgroundRunner interface {
 	Run(context.Context)
 }
 
 func routeRuntimeFromRoutes(
 	routes []router.Route,
+	endpointResolver discovery.EndpointResolver,
 	transport http.RoundTripper,
 	healthCheckClient *http.Client,
 	circuitFailureThreshold int,
@@ -64,6 +66,7 @@ func routeRuntimeFromRoutes(
 	rateLimiterMetrics *metrics.RateLimiter,
 	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
 	passiveHealthCheckMetrics *metrics.PassiveHealth,
+	dnsDiscoveryMetrics *metrics.DNSDiscovery,
 	trustedCIDRs []netip.Prefix,
 	logger *slog.Logger,
 ) (*routeRuntime, error) {
@@ -215,7 +218,7 @@ func routeRuntimeFromRoutes(
 							err,
 						)
 					}
-					runtime.healthRunners = append(runtime.healthRunners, activeHealthChecker)
+					runtime.backgroundRunners = append(runtime.backgroundRunners, activeHealthChecker)
 				}
 
 				routeTransport := transport
@@ -251,8 +254,53 @@ func routeRuntimeFromRoutes(
 							err,
 						)
 					}
-					runtime.healthRunners = append(runtime.healthRunners, routePassiveHealthObserver)
+					runtime.backgroundRunners = append(runtime.backgroundRunners, routePassiveHealthObserver)
 					routeTransport = routePassiveHealthTransport
+				}
+
+				if route.Upstream.DNSDiscovery != nil {
+					endpointCoordinator, err := upstream.NewEndpointCoordinator(
+						endpointMembership,
+						healthAwarePicker,
+						activeHealthTracker,
+						passiveHealthTracker,
+					)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"create endpoint coordinator for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+
+					if err := endpointCoordinator.Apply(nil); err != nil {
+						return nil, fmt.Errorf(
+							"initialize DNS discovery for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+
+					dnsDiscoveryRouteMetrics := dnsDiscoveryMetrics.ForRoute(
+						route.Name,
+					)
+
+					dnsWatcher, err := newRouteDNSWatcher(
+						route.Name,
+						route.Upstream,
+						endpointResolver,
+						endpointCoordinator,
+						dnsDiscoveryRouteMetrics,
+						logger,
+					)
+					if err != nil {
+						return nil, fmt.Errorf(
+							"create DNS watcher for route %q: %w",
+							route.Name,
+							err,
+						)
+					}
+					runtime.backgroundRunners = append(runtime.backgroundRunners, dnsWatcher)
 				}
 
 				circuitBreakerRouteMetrics := circuitBreakerMetrics.ForRoute(route.Name)

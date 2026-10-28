@@ -22,6 +22,7 @@ const (
 
 // Upstream describes a group of backend endpoints and its load-balancing policy.
 type Upstream struct {
+	DNSDiscovery       *DNSDiscoveryPolicy
 	LoadBalancing      LoadBalancingPolicy
 	Endpoints          []url.URL
 	ActiveHealthCheck  *ActiveHealthCheckPolicy
@@ -50,6 +51,20 @@ func (u *Upstream) validate() error {
 			return fmt.Errorf("upstream endpoint [%d]: URL must have a valid host", i)
 		}
 	}
+	if u.DNSDiscovery != nil {
+		if len(u.Endpoints) != 1 {
+			return errors.New("DNS discovery requires exactly one logical endpoint")
+		}
+		if u.Endpoints[0].Scheme != "http" {
+			return errors.New("DNS discovery endpoint must use http scheme")
+		}
+		if u.DNSDiscovery.RefreshInterval <= 0 {
+			return errors.New("DNS refresh interval must be positive")
+		}
+		if u.DNSDiscovery.LookupTimeout <= 0 {
+			return errors.New("DNS lookup timeout must be positive")
+		}
+	}
 	if u.ActiveHealthCheck != nil {
 		if err := u.ActiveHealthCheck.validate(); err != nil {
 			return fmt.Errorf("active health check validation: %w", err)
@@ -61,6 +76,13 @@ func (u *Upstream) validate() error {
 		}
 	}
 	return nil
+}
+
+// DNSDiscoveryPolicy defines how often an upstream hostname is resolved and
+// how long each DNS lookup may take.
+type DNSDiscoveryPolicy struct {
+	RefreshInterval time.Duration
+	LookupTimeout   time.Duration
 }
 
 // ActiveHealthCheckPolicy defines periodic HTTP probing and state-transition
