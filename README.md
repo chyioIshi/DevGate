@@ -163,6 +163,11 @@ publishes an empty snapshot and returns the route to fail-closed behavior.
 Active and passive health state, endpoint membership, and load balancing are
 updated together whenever a new snapshot is published.
 
+When a refresh removes an endpoint, new requests stop selecting it
+immediately. Requests already using that endpoint are allowed to finish, and
+its unused keep-alive connections expire according to
+`DEVGATE_UPSTREAM_IDLE_CONN_TIMEOUT`.
+
 DNS discovery exports the following Prometheus metrics:
 
 - `devgate_dns_discovery_refreshes_total{route,outcome}` counts refresh
