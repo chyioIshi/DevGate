@@ -41,6 +41,8 @@ const (
 	envConfigFile                      = "DEVGATE_CONFIG_FILE"
 	envLogFormat                       = "DEVGATE_LOG_FORMAT"
 	envLogLevel                        = "DEVGATE_LOG_LEVEL"
+	envTLSCertFile                     = "DEVGATE_TLS_CERT_FILE"
+	envTLSKeyFile                      = "DEVGATE_TLS_KEY_FILE"
 )
 
 var configEnvKeys = []string{
@@ -62,6 +64,8 @@ var configEnvKeys = []string{
 	envConfigFile,
 	envLogFormat,
 	envLogLevel,
+	envTLSCertFile,
+	envTLSKeyFile,
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -120,6 +124,8 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envTrustedProxyCIDRs, "10.0.0.10/32,2001:db8::10/128")
 	t.Setenv(envLogFormat, "json")
 	t.Setenv(envLogLevel, "debug")
+	t.Setenv(envTLSCertFile, "/run/secrets/devgate/tls.crt")
+	t.Setenv(envTLSKeyFile, "/run/secrets/devgate/tls.key")
 	configPath := writeConfigFile(t, testRouteConfigYAML)
 	t.Setenv(envConfigFile, configPath)
 
@@ -147,10 +153,12 @@ func TestLoadOverrides(t *testing.T) {
 			netip.MustParsePrefix("10.0.0.10/32"),
 			netip.MustParsePrefix("2001:db8::10/128"),
 		},
-		ConfigFile: configPath,
-		Routes:     testRouteConfigs(),
-		LogFormat:  "json",
-		LogLevel:   "debug",
+		ConfigFile:  configPath,
+		Routes:      testRouteConfigs(),
+		LogFormat:   "json",
+		LogLevel:    "debug",
+		TLSCertFile: "/run/secrets/devgate/tls.crt",
+		TLSKeyFile:  "/run/secrets/devgate/tls.key",
 	}
 
 	assertConfigEqual(t, got, want)
@@ -293,6 +301,48 @@ func TestLoadRejectsInvalidLogConfiguration(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.wantMessage) {
 				t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsIncompleteTLSConfiguration(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{
+			name:  "certificate without key",
+			key:   envTLSCertFile,
+			value: "/run/secrets/devgate/tls.crt",
+		},
+		{
+			name:  "key without certificate",
+			key:   envTLSKeyFile,
+			value: "/run/secrets/devgate/tls.key",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(test.key, test.value)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want TLS validation error")
+			}
+
+			assertZeroConfig(t, got)
+			if !strings.Contains(err.Error(), "validate config") {
+				t.Errorf("Load() error = %q, want validation context", err)
+			}
+			if !strings.Contains(
+				err.Error(),
+				"TLS certificate and key files must be configured together",
+			) {
+				t.Errorf("Load() error = %q, want incomplete TLS configuration context", err)
 			}
 		})
 	}
@@ -645,7 +695,9 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.UpstreamCircuitOpenTimeout != want.UpstreamCircuitOpenTimeout ||
 		got.ConfigFile != want.ConfigFile ||
 		got.LogFormat != want.LogFormat ||
-		got.LogLevel != want.LogLevel {
+		got.LogLevel != want.LogLevel ||
+		got.TLSCertFile != want.TLSCertFile ||
+		got.TLSKeyFile != want.TLSKeyFile {
 		t.Errorf("Config scalar fields = %+v, want %+v", got, want)
 	}
 	if !reflect.DeepEqual(got.Routes, want.Routes) {

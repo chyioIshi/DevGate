@@ -43,6 +43,10 @@ func main() {
 }
 
 func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	tlsConfig, err := loadServerTLSConfig(cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return fmt.Errorf("configure server TLS: %w", err)
+	}
 	routes, err := routesFromConfig(cfg.Routes)
 	if err != nil {
 		return fmt.Errorf("load routes from config: %w", err)
@@ -135,6 +139,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		MaxHeaderBytes:    cfg.MaxHeaderBytes,
 		IdleTimeout:       cfg.IdleTimeout,
+		TLSConfig:         tlsConfig,
 	}
 	stopBackgroundRunners := routeRuntime.startBackgroundRunners(ctx)
 	defer stopBackgroundRunners()
@@ -152,9 +157,23 @@ func serve(ctx context.Context, server *http.Server, logger *slog.Logger, shutdo
 
 	serveErrCh := make(chan error, 1)
 
-	logger.Info("starting server", "addr", server.Addr)
+	serveProtocol := "HTTP"
+	listenAndServe := server.ListenAndServe
+
+	if server.TLSConfig != nil {
+		serveProtocol = "HTTPS"
+		listenAndServe = func() error {
+			return server.ListenAndServeTLS("", "")
+		}
+	}
+	logger.Info(
+		"starting server",
+		"addr", server.Addr,
+		"protocol", serveProtocol,
+	)
+
 	go func() {
-		serveErrCh <- server.ListenAndServe()
+		serveErrCh <- listenAndServe()
 	}()
 
 	select {
@@ -163,7 +182,11 @@ func serve(ctx context.Context, server *http.Server, logger *slog.Logger, shutdo
 			return nil
 		}
 
-		return fmt.Errorf("serve HTTP: %w", err)
+		return fmt.Errorf(
+			"serve %s: %w",
+			serveProtocol,
+			err,
+		)
 
 	case <-shutdownSignal.Done():
 		stop()
@@ -181,7 +204,11 @@ func serve(ctx context.Context, server *http.Server, logger *slog.Logger, shutdo
 			if closeErr := server.Close(); closeErr != nil {
 				return errors.Join(
 					shutdownErr,
-					fmt.Errorf("force close server: %w", closeErr),
+					fmt.Errorf(
+						"force close %s server: %w",
+						serveProtocol,
+						closeErr,
+					),
 				)
 			}
 
@@ -190,7 +217,11 @@ func serve(ctx context.Context, server *http.Server, logger *slog.Logger, shutdo
 
 		err := <-serveErrCh
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return fmt.Errorf("serve HTTP during shutdown: %w", err)
+			return fmt.Errorf(
+				"serve %s during shutdown: %w",
+				serveProtocol,
+				err,
+			)
 		}
 
 		return nil
