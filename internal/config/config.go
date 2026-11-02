@@ -33,6 +33,8 @@ type Config struct {
 	Routes                          []RouteConfig
 	LogFormat                       LogFormat      `env:"DEVGATE_LOG_FORMAT"`
 	LogLevel                        LogLevel       `env:"DEVGATE_LOG_LEVEL"`
+	TLSCertFile                     string         `env:"DEVGATE_TLS_CERT_FILE"`
+	TLSKeyFile                      string         `env:"DEVGATE_TLS_KEY_FILE"`
 	UpstreamMaxIdleConns            int            `env:"DEVGATE_UPSTREAM_MAX_IDLE_CONNS"`
 	UpstreamMaxIdleConnsPerHost     int            `env:"DEVGATE_UPSTREAM_MAX_IDLE_CONNS_PER_HOST"`
 	UpstreamMaxConnsPerHost         int            `env:"DEVGATE_UPSTREAM_MAX_CONNS_PER_HOST"`
@@ -75,6 +77,13 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("invalid log level: %q, must be 'info', 'warn', 'error', 'debug'", c.LogLevel)
 	}
+
+	configuredCert := c.TLSCertFile != ""
+	configuredKey := c.TLSKeyFile != ""
+	if configuredCert != configuredKey {
+		return errors.New("TLS certificate and key files must be configured together")
+	}
+
 	if c.UpstreamMaxIdleConns <= 0 {
 		return errors.New("upstream max idle connections must be positive")
 	}

@@ -2,6 +2,25 @@
 
 DevGate is a production-oriented API gateway written in Go.
 
+## TLS termination
+
+DevGate serves plaintext HTTP by default. Configure both PEM files to terminate
+client TLS connections at the gateway:
+
+```dotenv
+DEVGATE_TLS_CERT_FILE=/run/secrets/devgate/tls.crt
+DEVGATE_TLS_KEY_FILE=/run/secrets/devgate/tls.key
+```
+
+The certificate file may contain the server certificate followed by its
+intermediate certificate chain. The key file must contain the matching private
+key. Configuring only one file is rejected, and invalid or mismatched files
+stop startup before background discovery and health-check workers run.
+
+TLS termination requires TLS 1.2 or newer and enables HTTP/2 negotiation
+through ALPN. It controls only the client-to-DevGate connection; each route's
+upstream URL independently selects `http` or `https` for the upstream leg.
+
 ## Path routing
 
 Each route configures exactly one path matcher. A prefix matcher accepts the
