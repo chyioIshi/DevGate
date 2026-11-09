@@ -66,6 +66,7 @@ routes:
         headers:
           Content-Type: application/json
     rate_limit:
+      backend: redis
       requests_per_second: 10.5
       burst: 20
   - name: fallback
@@ -136,6 +137,7 @@ routes:
 				},
 			},
 			RateLimit: &RateLimitConfig{
+				Backend:           RateLimitBackendRedis,
 				RequestsPerSecond: 10.5,
 				Burst:             20,
 			},

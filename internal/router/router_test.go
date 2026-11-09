@@ -828,6 +828,7 @@ func TestNewValidatesDirectResponseAction(t *testing.T) {
 				PathPrefix:     "/api",
 				DirectResponse: &DirectResponse{StatusCode: http.StatusServiceUnavailable},
 				RateLimit: &RateLimitPolicy{
+					Backend:           RateLimitBackendLocal,
 					RequestsPerSecond: 10,
 					Burst:             20,
 				},
@@ -1091,6 +1092,7 @@ func TestNewValidatesRedirectPolicies(t *testing.T) {
 			name: "rate limit is allowed",
 			configure: func(route *Route) {
 				route.RateLimit = &RateLimitPolicy{
+					Backend:           RateLimitBackendLocal,
 					RequestsPerSecond: 10,
 					Burst:             20,
 				}
@@ -1214,6 +1216,7 @@ func TestNewAcceptsSupportedCustomErrorResponses(t *testing.T) {
 				route.MaxRequestBodyBytes = 1024
 			case http.StatusTooManyRequests:
 				route.RateLimit = &RateLimitPolicy{
+					Backend:           RateLimitBackendLocal,
 					RequestsPerSecond: 10,
 					Burst:             20,
 				}
@@ -1819,15 +1822,42 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		wantMessage string
 	}{
 		{
-			name: "valid policy",
+			name: "valid local policy",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: 10.5,
 				Burst:             20,
 			},
 		},
 		{
+			name: "valid Redis policy",
+			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendRedis,
+				RequestsPerSecond: 10.5,
+				Burst:             20,
+			},
+		},
+		{
+			name: "empty backend",
+			policy: RateLimitPolicy{
+				RequestsPerSecond: 10.5,
+				Burst:             20,
+			},
+			wantMessage: `invalid rate limit backend: ""`,
+		},
+		{
+			name: "unknown backend",
+			policy: RateLimitPolicy{
+				Backend:           RateLimitBackend("memory"),
+				RequestsPerSecond: 10.5,
+				Burst:             20,
+			},
+			wantMessage: `invalid rate limit backend: "memory"`,
+		},
+		{
 			name: "zero requests per second",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: 0,
 				Burst:             1,
 			},
@@ -1836,6 +1866,7 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		{
 			name: "negative requests per second",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: -1,
 				Burst:             1,
 			},
@@ -1844,6 +1875,7 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		{
 			name: "NaN requests per second",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: math.NaN(),
 				Burst:             1,
 			},
@@ -1852,6 +1884,7 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		{
 			name: "positive infinity requests per second",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: math.Inf(1),
 				Burst:             1,
 			},
@@ -1860,6 +1893,7 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		{
 			name: "negative infinity requests per second",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: math.Inf(-1),
 				Burst:             1,
 			},
@@ -1868,6 +1902,7 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		{
 			name: "zero burst",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: 1,
 				Burst:             0,
 			},
@@ -1876,6 +1911,7 @@ func TestNewValidatesRateLimitPolicy(t *testing.T) {
 		{
 			name: "negative burst",
 			policy: RateLimitPolicy{
+				Backend:           RateLimitBackendLocal,
 				RequestsPerSecond: 1,
 				Burst:             -1,
 			},

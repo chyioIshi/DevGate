@@ -45,6 +45,7 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 		&http.Client{Transport: probeTransport},
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		activeHealthCheckMetrics,

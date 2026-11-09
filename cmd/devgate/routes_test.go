@@ -56,6 +56,7 @@ func TestRoutesFromConfig(t *testing.T) {
 				},
 			},
 			RateLimit: &config.RateLimitConfig{
+				Backend:           config.RateLimitBackendLocal,
 				RequestsPerSecond: 12.5,
 				Burst:             25,
 			},
@@ -140,6 +141,7 @@ func TestRoutesFromConfig(t *testing.T) {
 				},
 			},
 			rateLimit: &router.RateLimitPolicy{
+				Backend:           router.RateLimitBackendLocal,
 				RequestsPerSecond: 12.5,
 				Burst:             25,
 			},
@@ -310,6 +312,107 @@ func TestRoutesFromConfig(t *testing.T) {
 				got[i].MaxRequestBodyBytes,
 				want[i].maxRequestBodyBytes,
 			)
+		}
+	}
+}
+
+func TestRateLimitPolicyFromConfigMapsBackend(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      *config.RateLimitConfig
+		wantBackend router.RateLimitBackend
+		wantNil     bool
+	}{
+		{
+			name:    "disabled",
+			wantNil: true,
+		},
+		{
+			name: "omitted backend defaults to local",
+			config: &config.RateLimitConfig{
+				RequestsPerSecond: 10,
+				Burst:             20,
+			},
+			wantBackend: router.RateLimitBackendLocal,
+		},
+		{
+			name: "explicit local backend",
+			config: &config.RateLimitConfig{
+				Backend:           config.RateLimitBackendLocal,
+				RequestsPerSecond: 10,
+				Burst:             20,
+			},
+			wantBackend: router.RateLimitBackendLocal,
+		},
+		{
+			name: "Redis backend",
+			config: &config.RateLimitConfig{
+				Backend:           config.RateLimitBackendRedis,
+				RequestsPerSecond: 10,
+				Burst:             20,
+			},
+			wantBackend: router.RateLimitBackendRedis,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := rateLimitPolicyFromConfig(test.config)
+			if err != nil {
+				t.Fatalf("rateLimitPolicyFromConfig() error = %v", err)
+			}
+			if test.wantNil {
+				if got != nil {
+					t.Errorf("rateLimitPolicyFromConfig() = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("rateLimitPolicyFromConfig() = nil, want policy")
+			}
+			if got.Backend != test.wantBackend {
+				t.Errorf("mapped backend = %q, want %q", got.Backend, test.wantBackend)
+			}
+			if got.RequestsPerSecond != test.config.RequestsPerSecond {
+				t.Errorf(
+					"mapped requests per second = %v, want %v",
+					got.RequestsPerSecond,
+					test.config.RequestsPerSecond,
+				)
+			}
+			if got.Burst != test.config.Burst {
+				t.Errorf("mapped burst = %d, want %d", got.Burst, test.config.Burst)
+			}
+		})
+	}
+}
+
+func TestRoutesFromConfigRejectsUnknownRateLimitBackend(t *testing.T) {
+	routes, err := routesFromConfig([]config.RouteConfig{
+		{
+			Name:        "users",
+			Protocol:    "http",
+			PathPrefix:  "/users",
+			UpstreamURL: "http://users-service:8080",
+			RateLimit: &config.RateLimitConfig{
+				Backend:           config.RateLimitBackend("memory"),
+				RequestsPerSecond: 10,
+				Burst:             20,
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("routesFromConfig() error = nil, want backend error")
+	}
+	if routes != nil {
+		t.Errorf("routesFromConfig() routes = %#v, want nil", routes)
+	}
+	for _, context := range []string{
+		`map rate limit from config for route "users"`,
+		`invalid rate limit backend "memory"`,
+	} {
+		if !strings.Contains(err.Error(), context) {
+			t.Errorf("routesFromConfig() error = %q, want context %q", err, context)
 		}
 	}
 }

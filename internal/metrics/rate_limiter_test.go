@@ -16,9 +16,13 @@ func TestRateLimiterExportsRequestsByRouteAndOutcome(t *testing.T) {
 		rateLimiterMetrics.RecordAllowedRequest("users")
 	}
 	rateLimiterMetrics.RecordRejectedRequest("users")
+	rateLimiterMetrics.RecordFailedRequest("users")
 	rateLimiterMetrics.RecordAllowedRequest("orders")
 	for range 3 {
 		rateLimiterMetrics.RecordRejectedRequest("orders")
+	}
+	for range 2 {
+		rateLimiterMetrics.RecordFailedRequest("orders")
 	}
 
 	const want = `
@@ -26,6 +30,8 @@ func TestRateLimiterExportsRequestsByRouteAndOutcome(t *testing.T) {
 # TYPE devgate_rate_limiter_requests_total counter
 devgate_rate_limiter_requests_total{outcome="allowed",route="orders"} 1
 devgate_rate_limiter_requests_total{outcome="allowed",route="users"} 2
+devgate_rate_limiter_requests_total{outcome="error",route="orders"} 2
+devgate_rate_limiter_requests_total{outcome="error",route="users"} 1
 devgate_rate_limiter_requests_total{outcome="rejected",route="orders"} 3
 devgate_rate_limiter_requests_total{outcome="rejected",route="users"} 1
 `
