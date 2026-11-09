@@ -43,6 +43,14 @@ const (
 	envLogLevel                        = "DEVGATE_LOG_LEVEL"
 	envTLSCertFile                     = "DEVGATE_TLS_CERT_FILE"
 	envTLSKeyFile                      = "DEVGATE_TLS_KEY_FILE"
+	envRedisAddr                       = "DEVGATE_REDIS_ADDR"
+	envRedisUsername                   = "DEVGATE_REDIS_USERNAME"
+	envRedisPassword                   = "DEVGATE_REDIS_PASSWORD"
+	envRedisDB                         = "DEVGATE_REDIS_DB"
+	envRedisDialTimeout                = "DEVGATE_REDIS_DIAL_TIMEOUT"
+	envRedisReadTimeout                = "DEVGATE_REDIS_READ_TIMEOUT"
+	envRedisWriteTimeout               = "DEVGATE_REDIS_WRITE_TIMEOUT"
+	envRedisKeyPrefix                  = "DEVGATE_REDIS_KEY_PREFIX"
 )
 
 var configEnvKeys = []string{
@@ -66,6 +74,14 @@ var configEnvKeys = []string{
 	envLogLevel,
 	envTLSCertFile,
 	envTLSKeyFile,
+	envRedisAddr,
+	envRedisUsername,
+	envRedisPassword,
+	envRedisDB,
+	envRedisDialTimeout,
+	envRedisReadTimeout,
+	envRedisWriteTimeout,
+	envRedisKeyPrefix,
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -99,6 +115,12 @@ func TestLoadDefaults(t *testing.T) {
 		Routes:                          testRouteConfigs(),
 		LogFormat:                       "text",
 		LogLevel:                        "info",
+		Redis: RedisConfig{
+			DialTimeout:  time.Second,
+			ReadTimeout:  200 * time.Millisecond,
+			WriteTimeout: 200 * time.Millisecond,
+			KeyPrefix:    "devgate",
+		},
 	}
 
 	assertConfigEqual(t, got, want)
@@ -126,6 +148,14 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv(envLogLevel, "debug")
 	t.Setenv(envTLSCertFile, "/run/secrets/devgate/tls.crt")
 	t.Setenv(envTLSKeyFile, "/run/secrets/devgate/tls.key")
+	t.Setenv(envRedisAddr, "redis.internal:6379")
+	t.Setenv(envRedisUsername, "devgate")
+	t.Setenv(envRedisPassword, "test-password")
+	t.Setenv(envRedisDB, "2")
+	t.Setenv(envRedisDialTimeout, "750ms")
+	t.Setenv(envRedisReadTimeout, "150ms")
+	t.Setenv(envRedisWriteTimeout, "175ms")
+	t.Setenv(envRedisKeyPrefix, "prod:payments")
 	configPath := writeConfigFile(t, testRouteConfigYAML)
 	t.Setenv(envConfigFile, configPath)
 
@@ -159,6 +189,16 @@ func TestLoadOverrides(t *testing.T) {
 		LogLevel:    "debug",
 		TLSCertFile: "/run/secrets/devgate/tls.crt",
 		TLSKeyFile:  "/run/secrets/devgate/tls.key",
+		Redis: RedisConfig{
+			Addr:         "redis.internal:6379",
+			Username:     "devgate",
+			Password:     "test-password",
+			DB:           2,
+			DialTimeout:  750 * time.Millisecond,
+			ReadTimeout:  150 * time.Millisecond,
+			WriteTimeout: 175 * time.Millisecond,
+			KeyPrefix:    "prod:payments",
+		},
 	}
 
 	assertConfigEqual(t, got, want)
@@ -477,6 +517,80 @@ func TestLoadRejectsNonPositiveDurations(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidRedisConfiguration(t *testing.T) {
+	tests := []struct {
+		name        string
+		envKey      string
+		envValue    string
+		wantMessage string
+	}{
+		{
+			name:        "negative database",
+			envKey:      envRedisDB,
+			envValue:    "-1",
+			wantMessage: "redis db must be non-negative",
+		},
+		{
+			name:        "zero dial timeout",
+			envKey:      envRedisDialTimeout,
+			envValue:    "0s",
+			wantMessage: "redis dial timeout must be positive",
+		},
+		{
+			name:        "negative read timeout",
+			envKey:      envRedisReadTimeout,
+			envValue:    "-1ms",
+			wantMessage: "redis read timeout must be positive",
+		},
+		{
+			name:        "zero write timeout",
+			envKey:      envRedisWriteTimeout,
+			envValue:    "0s",
+			wantMessage: "redis write timeout must be positive",
+		},
+		{
+			name:        "whitespace key prefix",
+			envKey:      envRedisKeyPrefix,
+			envValue:    " \t ",
+			wantMessage: "redis key prefix must not be empty",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv(envRedisAddr, "redis.internal:6379")
+			t.Setenv(test.envKey, test.envValue)
+
+			got, err := Load()
+			if err == nil {
+				t.Fatal("Load() error = nil, want Redis validation error")
+			}
+			assertZeroConfig(t, got)
+			if !strings.Contains(err.Error(), "validate config") {
+				t.Errorf("Load() error = %q, want validation context", err)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf("Load() error = %q, want %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidRedisDuration(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv(envRedisDialTimeout, "slow")
+
+	got, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want Redis duration parsing error")
+	}
+	assertZeroConfig(t, got)
+	if !strings.Contains(err.Error(), "parse environment") {
+		t.Errorf("Load() error = %q, want parsing context", err)
+	}
+}
+
 func TestLoadRejectsNonPositiveUpstreamConnectionLimits(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -698,7 +812,41 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 		got.LogLevel != want.LogLevel ||
 		got.TLSCertFile != want.TLSCertFile ||
 		got.TLSKeyFile != want.TLSKeyFile {
-		t.Errorf("Config scalar fields = %+v, want %+v", got, want)
+		gotForLog := got
+		wantForLog := want
+		gotForLog.Redis.Password = "[redacted]"
+		wantForLog.Redis.Password = "[redacted]"
+		t.Errorf("Config scalar fields = %+v, want %+v", gotForLog, wantForLog)
+	}
+	if got.Redis.Addr != want.Redis.Addr ||
+		got.Redis.Username != want.Redis.Username ||
+		got.Redis.DB != want.Redis.DB ||
+		got.Redis.DialTimeout != want.Redis.DialTimeout ||
+		got.Redis.ReadTimeout != want.Redis.ReadTimeout ||
+		got.Redis.WriteTimeout != want.Redis.WriteTimeout ||
+		got.Redis.KeyPrefix != want.Redis.KeyPrefix {
+		t.Errorf(
+			"Config.Redis non-secret fields differ: "+
+				"got addr=%q username=%q db=%d dial=%s read=%s write=%s prefix=%q; "+
+				"want addr=%q username=%q db=%d dial=%s read=%s write=%s prefix=%q",
+			got.Redis.Addr,
+			got.Redis.Username,
+			got.Redis.DB,
+			got.Redis.DialTimeout,
+			got.Redis.ReadTimeout,
+			got.Redis.WriteTimeout,
+			got.Redis.KeyPrefix,
+			want.Redis.Addr,
+			want.Redis.Username,
+			want.Redis.DB,
+			want.Redis.DialTimeout,
+			want.Redis.ReadTimeout,
+			want.Redis.WriteTimeout,
+			want.Redis.KeyPrefix,
+		)
+	}
+	if got.Redis.Password != want.Redis.Password {
+		t.Error("Config.Redis.Password differs from expected value")
 	}
 	if !reflect.DeepEqual(got.Routes, want.Routes) {
 		t.Errorf("Config.Routes = %+v, want %+v", got.Routes, want.Routes)
@@ -755,6 +903,9 @@ func validConfigForTest() Config {
 		UpstreamRetryBaseDelay:          100 * time.Millisecond,
 		UpstreamCircuitFailureThreshold: 5,
 		UpstreamCircuitOpenTimeout:      30 * time.Second,
+		Redis: RedisConfig{
+			KeyPrefix: "devgate",
+		},
 	}
 }
 

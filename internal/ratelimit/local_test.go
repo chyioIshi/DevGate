@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"context"
 	"math"
 	"strings"
 	"sync"
@@ -69,11 +70,19 @@ func TestLocalAllowConsumesInitialBurst(t *testing.T) {
 	}
 
 	for request := 1; request <= burst; request++ {
-		if !limiter.Allow() {
+		allowed, allowErr := limiter.Allow(context.Background())
+		if allowErr != nil {
+			t.Fatalf("Allow() request %d error = %v", request, allowErr)
+		}
+		if !allowed {
 			t.Errorf("Allow() request %d = false, want true", request)
 		}
 	}
-	if limiter.Allow() {
+	allowed, allowErr := limiter.Allow(context.Background())
+	if allowErr != nil {
+		t.Fatalf("Allow() after burst exhausted error = %v", allowErr)
+	}
+	if allowed {
 		t.Error("Allow() after burst exhausted = true, want false")
 	}
 }
@@ -96,7 +105,12 @@ func TestLocalAllowLimitsConcurrentRequestsToBurst(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			if limiter.Allow() {
+			allowedRequest, allowErr := limiter.Allow(context.Background())
+			if allowErr != nil {
+				t.Errorf("Allow() error = %v", allowErr)
+				return
+			}
+			if allowedRequest {
 				allowed.Add(1)
 			}
 		}()

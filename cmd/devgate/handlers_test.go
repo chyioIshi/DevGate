@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/chyioishi/devgate/internal/metrics"
+	"github.com/chyioishi/devgate/internal/ratelimit"
 	"github.com/chyioishi/devgate/internal/router"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -41,6 +43,7 @@ func handlersFromRoutes(
 		nil,
 		circuitFailureThreshold,
 		circuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
 		newTestActiveHealthCheckMetrics(),
@@ -156,6 +159,7 @@ func TestRouteRuntimeDNSDiscoveryStartsFailClosed(t *testing.T) {
 		nil,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -223,6 +227,7 @@ func TestRouteRuntimeDNSDiscoveryPublishesResolvedEndpoints(t *testing.T) {
 		nil,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -325,6 +330,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 		&http.Client{Transport: &countingRoundTripper{}},
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -366,6 +372,7 @@ func TestRouteRuntimeFromRoutesCollectsPassiveHealthRunner(t *testing.T) {
 		nil,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -412,6 +419,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveAndPassiveHealthRunners(t *testing.
 		&http.Client{Transport: &countingRoundTripper{}},
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -454,6 +462,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 		nil,
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
+		newTestRateLimiterFactory(),
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -744,6 +753,7 @@ func TestHandlersFromRoutesAppliesRateLimitToDirectResponse(t *testing.T) {
 				StatusCode: http.StatusServiceUnavailable,
 			},
 			RateLimit: &router.RateLimitPolicy{
+				Backend:           router.RateLimitBackendLocal,
 				RequestsPerSecond: 1,
 				Burst:             1,
 			},
@@ -800,6 +810,7 @@ func TestHandlersFromRoutesAppliesRateLimitToRedirect(t *testing.T) {
 				Location:   "/api/v2",
 			},
 			RateLimit: &router.RateLimitPolicy{
+				Backend:           router.RateLimitBackendLocal,
 				RequestsPerSecond: 1,
 				Burst:             1,
 			},
@@ -1197,6 +1208,7 @@ func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
 			PathPrefix: "/api/users",
 			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 			RateLimit: &router.RateLimitPolicy{
+				Backend:           router.RateLimitBackendLocal,
 				RequestsPerSecond: 0,
 				Burst:             1,
 			},
@@ -1224,6 +1236,70 @@ func TestHandlersFromRoutesReturnsRateLimiterConfigurationError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rate limiter") {
 		t.Errorf("handlersFromRoutes() error = %q, want rate limiter context", err)
+	}
+}
+
+func TestHandlersFromRoutesRejectsInvalidRateLimiterConstruction(t *testing.T) {
+	tests := []struct {
+		name        string
+		backend     router.RateLimitBackend
+		wantMessage string
+	}{
+		{
+			name:        "Redis backend",
+			backend:     router.RateLimitBackendRedis,
+			wantMessage: "redis client was not provided",
+		},
+		{
+			name:        "unknown backend",
+			backend:     router.RateLimitBackend("memory"),
+			wantMessage: "unknown rate limiter backend",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			routes := []router.Route{
+				{
+					Name: "maintenance",
+					DirectResponse: &router.DirectResponse{
+						StatusCode: http.StatusServiceUnavailable,
+					},
+					RateLimit: &router.RateLimitPolicy{
+						Backend:           test.backend,
+						RequestsPerSecond: 1,
+						Burst:             1,
+					},
+				},
+			}
+
+			handlers, err := handlersFromRoutes(
+				routes,
+				http.DefaultTransport,
+				testCircuitFailureThreshold,
+				testCircuitOpenTimeout,
+				newTestCircuitBreakerMetrics(),
+				newTestRateLimiterMetrics(),
+				nil,
+				discardLogger(),
+			)
+			if err == nil {
+				t.Fatal("handlersFromRoutes() error = nil, want backend error")
+			}
+			if handlers != nil {
+				t.Errorf("handlersFromRoutes() handlers = %+v, want nil", handlers)
+			}
+			if !strings.Contains(err.Error(), "maintenance") {
+				t.Errorf("handlersFromRoutes() error = %q, want route name", err)
+			}
+			if !strings.Contains(err.Error(), test.wantMessage) {
+				t.Errorf(
+					"handlersFromRoutes() error = %q, want %q",
+					err,
+					test.wantMessage,
+				)
+			}
+		})
 	}
 }
 
@@ -1332,6 +1408,7 @@ func TestHandlersFromRoutesAppliesRateLimitBeforeUpstream(t *testing.T) {
 			PathPrefix: "/api/users",
 			Upstream:   testRouteUpstream(t, "http://users-service:8080"),
 			RateLimit: &router.RateLimitPolicy{
+				Backend:           router.RateLimitBackendLocal,
 				RequestsPerSecond: 1e-9,
 				Burst:             2,
 			},
@@ -1389,6 +1466,69 @@ devgate_rate_limiter_requests_total{outcome="rejected",route="users"} 1
 		"devgate_rate_limiter_requests_total",
 	); err != nil {
 		t.Errorf("rate limiter metrics mismatch: %v", err)
+	}
+}
+
+func TestRouteRuntimeAppliesRedisRateLimit(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := newTestRedisClientWithAddr(t, server.Addr())
+	route := router.Route{
+		Name: "limited",
+		DirectResponse: &router.DirectResponse{
+			StatusCode: http.StatusNoContent,
+		},
+		RateLimit: &router.RateLimitPolicy{
+			Backend:           router.RateLimitBackendRedis,
+			RequestsPerSecond: 1e-9,
+			Burst:             1,
+		},
+	}
+	limiterFactory := func(
+		routeName string,
+		policy router.RateLimitPolicy,
+	) (ratelimit.Limiter, error) {
+		return newRateLimiter(routeName, policy, client, "test")
+	}
+	runtime, err := routeRuntimeFromRoutes(
+		[]router.Route{route},
+		nil,
+		http.DefaultTransport,
+		nil,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		limiterFactory,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
+		nil,
+		discardLogger(),
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	handler := runtime.handlers[route.Name]
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(
+		first,
+		httptest.NewRequest(http.MethodGet, "http://gateway.local/limited", nil),
+	)
+	if first.Code != http.StatusNoContent {
+		t.Errorf("first status = %d, want %d", first.Code, http.StatusNoContent)
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(
+		second,
+		httptest.NewRequest(http.MethodGet, "http://gateway.local/limited", nil),
+	)
+	if second.Code != http.StatusTooManyRequests {
+		t.Errorf("second status = %d, want %d", second.Code, http.StatusTooManyRequests)
+	}
+	if wantKey := "test:ratelimit:limited"; !server.Exists(wantKey) {
+		t.Errorf("Redis key %q does not exist", wantKey)
 	}
 }
 
@@ -1717,6 +1857,15 @@ func newTestCircuitBreakerMetrics() *metrics.CircuitBreaker {
 
 func newTestRateLimiterMetrics() *metrics.RateLimiter {
 	return metrics.NewRateLimiter(prometheus.NewRegistry())
+}
+
+func newTestRateLimiterFactory() rateLimiterFactory {
+	return func(
+		routeName string,
+		policy router.RateLimitPolicy,
+	) (ratelimit.Limiter, error) {
+		return newRateLimiter(routeName, policy, nil, "test")
+	}
 }
 
 func newTestActiveHealthCheckMetrics() *metrics.ActiveHealthCheck {

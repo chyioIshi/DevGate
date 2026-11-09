@@ -19,6 +19,16 @@ const (
 	ProtocolGRPC Protocol = "grpc"
 )
 
+// RateLimitBackend identifies where rate-limit state is coordinated.
+type RateLimitBackend string
+
+const (
+	// RateLimitBackendLocal stores rate-limit state in the DevGate process.
+	RateLimitBackendLocal RateLimitBackend = "local"
+	// RateLimitBackendRedis coordinates rate-limit state through Redis.
+	RateLimitBackendRedis RateLimitBackend = "redis"
+)
+
 type Route struct {
 	Name                string
 	Protocol            Protocol
@@ -68,8 +78,10 @@ type ErrorResponse struct {
 	Headers map[string]string
 }
 
-// RateLimitPolicy defines the local token-bucket settings for a route.
+// RateLimitPolicy defines token-bucket settings and state coordination for a
+// route.
 type RateLimitPolicy struct {
+	Backend           RateLimitBackend
 	RequestsPerSecond float64
 	Burst             int
 }
@@ -409,6 +421,11 @@ func (p HeaderTransformPolicy) Apply(header http.Header) {
 }
 
 func (p RateLimitPolicy) validate() error {
+	switch p.Backend {
+	case RateLimitBackendLocal, RateLimitBackendRedis:
+	default:
+		return fmt.Errorf("invalid rate limit backend: %q", p.Backend)
+	}
 	if math.IsInf(p.RequestsPerSecond, 0) || math.IsNaN(p.RequestsPerSecond) {
 		return errors.New("requests per second must be finite")
 	}

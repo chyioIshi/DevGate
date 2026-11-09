@@ -37,12 +37,13 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 		responseHeaders := headerTransformPolicyFromConfig(
 			routeConfig.ResponseHeaders,
 		)
-		var rateLimit *router.RateLimitPolicy
-		if routeConfig.RateLimit != nil {
-			rateLimit = &router.RateLimitPolicy{
-				RequestsPerSecond: routeConfig.RateLimit.RequestsPerSecond,
-				Burst:             routeConfig.RateLimit.Burst,
-			}
+		rateLimit, err := rateLimitPolicyFromConfig(routeConfig.RateLimit)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"map rate limit from config for route %q: %w",
+				routeConfig.Name,
+				err,
+			)
 		}
 		route := router.Route{
 			Name:                routeConfig.Name,
@@ -240,4 +241,30 @@ func errorResponsesFromConfig(configErrorResponses map[int]config.ErrorResponseC
 		}
 	}
 	return errorResponses
+}
+
+func rateLimitPolicyFromConfig(
+	cfg *config.RateLimitConfig,
+) (*router.RateLimitPolicy, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	var limiterBackend router.RateLimitBackend
+
+	switch cfg.Backend {
+	case config.RateLimitBackendLocal, "":
+		limiterBackend = router.RateLimitBackendLocal
+	case config.RateLimitBackendRedis:
+		limiterBackend = router.RateLimitBackendRedis
+	default:
+		return nil, fmt.Errorf(
+			"invalid rate limit backend %q",
+			cfg.Backend,
+		)
+	}
+	return &router.RateLimitPolicy{
+		Backend:           limiterBackend,
+		RequestsPerSecond: cfg.RequestsPerSecond,
+		Burst:             cfg.Burst,
+	}, nil
 }

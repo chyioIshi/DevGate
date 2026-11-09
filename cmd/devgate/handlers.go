@@ -55,6 +55,11 @@ type backgroundRunner interface {
 	Run(context.Context)
 }
 
+type rateLimiterFactory func(
+	routeName string,
+	policy router.RateLimitPolicy,
+) (ratelimit.Limiter, error)
+
 func routeRuntimeFromRoutes(
 	routes []router.Route,
 	endpointResolver discovery.EndpointResolver,
@@ -62,6 +67,7 @@ func routeRuntimeFromRoutes(
 	healthCheckClient *http.Client,
 	circuitFailureThreshold int,
 	circuitOpenTimeout time.Duration,
+	limiterFactory rateLimiterFactory,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
 	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
@@ -398,13 +404,21 @@ func routeRuntimeFromRoutes(
 			)
 		}
 		if route.RateLimit != nil {
-			limiter, err := ratelimit.NewLocal(
-				route.RateLimit.RequestsPerSecond,
-				route.RateLimit.Burst,
+			if limiterFactory == nil {
+				return nil, fmt.Errorf(
+					"create rate limiter for route %q: limiter factory was not provided",
+					route.Name,
+				)
+			}
+			limiter, err := limiterFactory(
+				route.Name,
+				*route.RateLimit,
 			)
 			if err != nil {
 				return nil, fmt.Errorf(
-					"create rate limiter for route %q: %w", route.Name, err,
+					"create rate limiter for route %q: %w",
+					route.Name,
+					err,
 				)
 			}
 			limiterMetrics := rateLimiterMetrics.ForRoute(route.Name)

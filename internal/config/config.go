@@ -46,6 +46,20 @@ type Config struct {
 	UpstreamCircuitOpenTimeout      time.Duration  `env:"DEVGATE_UPSTREAM_CIRCUIT_OPEN_TIMEOUT"`
 	TrustedProxyCIDRs               []netip.Prefix `env:"DEVGATE_TRUSTED_PROXY_CIDRS" envSeparator:","`
 	ErrorResponses                  map[int]ErrorResponseConfig
+	Redis                           RedisConfig
+}
+
+// RedisConfig configures the shared Redis connection used by distributed
+// gateway features.
+type RedisConfig struct {
+	Addr         string        `env:"DEVGATE_REDIS_ADDR"`
+	Username     string        `env:"DEVGATE_REDIS_USERNAME"`
+	Password     string        `env:"DEVGATE_REDIS_PASSWORD"`
+	DB           int           `env:"DEVGATE_REDIS_DB"`
+	DialTimeout  time.Duration `env:"DEVGATE_REDIS_DIAL_TIMEOUT"`
+	ReadTimeout  time.Duration `env:"DEVGATE_REDIS_READ_TIMEOUT"`
+	WriteTimeout time.Duration `env:"DEVGATE_REDIS_WRITE_TIMEOUT"`
+	KeyPrefix    string        `env:"DEVGATE_REDIS_KEY_PREFIX"`
 }
 
 func (c Config) validate() error {
@@ -132,10 +146,33 @@ func (c Config) validate() error {
 			)
 		}
 	}
+	if c.Redis.DB < 0 {
+		return errors.New("redis db must be non-negative")
+	}
+	if strings.TrimSpace(c.Redis.Addr) != "" {
+		if c.Redis.DialTimeout <= 0 {
+			return errors.New("redis dial timeout must be positive")
+		}
+		if c.Redis.ReadTimeout <= 0 {
+			return errors.New("redis read timeout must be positive")
+		}
+		if c.Redis.WriteTimeout <= 0 {
+			return errors.New("redis write timeout must be positive")
+		}
+	}
+	if strings.TrimSpace(c.Redis.KeyPrefix) == "" {
+		return errors.New("redis key prefix must not be empty")
+	}
 	return nil
 }
 
 func Load() (Config, error) {
+	redisConfig := RedisConfig{
+		DialTimeout:  time.Second,
+		ReadTimeout:  200 * time.Millisecond,
+		WriteTimeout: 200 * time.Millisecond,
+		KeyPrefix:    "devgate",
+	}
 	config := Config{
 		HTTPAddr:                        ":8080",
 		ReadHeaderTimeout:               5 * time.Second,
@@ -154,6 +191,7 @@ func Load() (Config, error) {
 		UpstreamRetryBaseDelay:          100 * time.Millisecond,
 		UpstreamCircuitFailureThreshold: 5,
 		UpstreamCircuitOpenTimeout:      30 * time.Second,
+		Redis:                           redisConfig,
 	}
 
 	if err := env.Parse(&config); err != nil {
