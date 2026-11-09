@@ -1,10 +1,14 @@
 package ratelimit
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 // Limiter decides whether one request may proceed immediately.
+// It returns an error when the decision cannot be made reliably.
 type Limiter interface {
-	Allow() bool
+	Allow(ctx context.Context) (bool, error)
 }
 
 var _ Limiter = (*Local)(nil)
@@ -13,17 +17,18 @@ var _ Limiter = (*Local)(nil)
 type Observer interface {
 	RecordAllowedRequest()
 	RecordRejectedRequest()
+	RecordFailedRequest()
 }
 
-// ErrorResponder writes an HTTP error for a rejected request.
+// ErrorResponder writes an HTTP error produced by rate-limit middleware.
 type ErrorResponder func(
 	http.ResponseWriter,
 	*http.Request,
 	int,
 )
 
-// Middleware rejects requests that exceed limiter with HTTP 429 and delegates
-// allowed requests to next.
+// Middleware delegates allowed requests to next, rejects denied requests with
+// HTTP 429, and fails closed with HTTP 503 when limiter cannot make a decision.
 func Middleware(
 	next http.Handler,
 	limiter Limiter,
@@ -31,7 +36,21 @@ func Middleware(
 	errorResponder ErrorResponder,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		isAllowed := limiter.Allow()
+		ctx := r.Context()
+		isAllowed, err := limiter.Allow(ctx)
+		if err != nil {
+			observer.RecordFailedRequest()
+			if errorResponder != nil {
+				errorResponder(w, r, http.StatusServiceUnavailable)
+			} else {
+				http.Error(
+					w,
+					http.StatusText(http.StatusServiceUnavailable),
+					http.StatusServiceUnavailable,
+				)
+			}
+			return
+		}
 		if !isAllowed {
 			observer.RecordRejectedRequest()
 			if errorResponder != nil {

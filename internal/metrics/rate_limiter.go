@@ -7,6 +7,7 @@ const (
 	rateLimiterRequestsTotalMetricName = "requests_total"
 	rateLimiterOutcomeAllowed          = "allowed"
 	rateLimiterOutcomeRejected         = "rejected"
+	rateLimiterOutcomeError            = "error"
 )
 
 // RateLimiter collects rate limiter decisions by route and outcome.
@@ -48,5 +49,14 @@ func (m *RateLimiter) RecordRejectedRequest(route string) {
 	m.requestsTotal.WithLabelValues(
 		route,
 		rateLimiterOutcomeRejected,
+	).Inc()
+}
+
+// RecordFailedRequest records one request whose rate-limit decision failed for
+// route.
+func (m *RateLimiter) RecordFailedRequest(route string) {
+	m.requestsTotal.WithLabelValues(
+		route,
+		rateLimiterOutcomeError,
 	).Inc()
 }

@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"context"
 	"errors"
 	"math"
 
@@ -32,7 +33,8 @@ func NewLocal(requestsPerSecond float64, burst int) (*Local, error) {
 	}, nil
 }
 
-// Allow reports whether one request may proceed immediately.
-func (l *Local) Allow() bool {
-	return l.limiter.Allow()
+// Allow reports whether one request may proceed immediately. The local limiter
+// makes its decision synchronously and does not use the request context.
+func (l *Local) Allow(ctx context.Context) (bool, error) {
+	return l.limiter.Allow(), nil
 }

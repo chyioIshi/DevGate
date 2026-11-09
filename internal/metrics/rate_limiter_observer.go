@@ -27,3 +27,9 @@ func (r *RateLimiterRouteMetrics) RecordAllowedRequest() {
 func (r *RateLimiterRouteMetrics) RecordRejectedRequest() {
 	r.rateLimiter.RecordRejectedRequest(r.route)
 }
+
+// RecordFailedRequest records one failed rate-limit decision for the bound
+// route.
+func (r *RateLimiterRouteMetrics) RecordFailedRequest() {
+	r.rateLimiter.RecordFailedRequest(r.route)
+}

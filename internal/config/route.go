@@ -14,6 +14,16 @@ const (
 	LoadBalancingPolicyLeastRequests LoadBalancingPolicy = "least_requests"
 )
 
+// RateLimitBackend identifies where rate-limit state is coordinated.
+type RateLimitBackend string
+
+const (
+	// RateLimitBackendLocal stores rate-limit state in the DevGate process.
+	RateLimitBackendLocal RateLimitBackend = "local"
+	// RateLimitBackendRedis coordinates rate-limit state through Redis.
+	RateLimitBackendRedis RateLimitBackend = "redis"
+)
+
 // RouteConfig describes one gateway route loaded from the configuration file.
 type RouteConfig struct {
 	Name                string                      `yaml:"name"`
@@ -44,10 +54,11 @@ type HeaderTransformConfig struct {
 	Remove []string          `yaml:"remove"`
 }
 
-// RateLimitConfig configures a local token-bucket rate limiter for a route.
+// RateLimitConfig configures a token-bucket rate limiter for a route.
 type RateLimitConfig struct {
-	RequestsPerSecond float64 `yaml:"requests_per_second"`
-	Burst             int     `yaml:"burst"`
+	Backend           RateLimitBackend `yaml:"backend"`
+	RequestsPerSecond float64          `yaml:"requests_per_second"`
+	Burst             int              `yaml:"burst"`
 }
 
 // DirectResponseConfig configures a static HTTP response returned without

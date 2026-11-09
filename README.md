@@ -326,6 +326,56 @@ transformations and rate limiting are supported, but the `Location` response
 header is owned by the redirect action and cannot be set or removed by a
 header transformation. Proxy-only settings are rejected.
 
+## Rate limiting
+
+Routes use a token bucket with a configurable steady refill rate and burst
+capacity. The default backend is process-local:
+
+```yaml
+rate_limit:
+  backend: local
+  requests_per_second: 100
+  burst: 200
+```
+
+`local` has no external dependency, but each DevGate replica owns an
+independent bucket. For a limit shared by every replica, use Redis:
+
+```yaml
+rate_limit:
+  backend: redis
+  requests_per_second: 100
+  burst: 200
+```
+
+Configure the shared client through environment variables:
+
+```dotenv
+DEVGATE_REDIS_ADDR=redis.example.internal:6379
+DEVGATE_REDIS_USERNAME=devgate
+DEVGATE_REDIS_PASSWORD=
+DEVGATE_REDIS_DB=0
+DEVGATE_REDIS_DIAL_TIMEOUT=1s
+DEVGATE_REDIS_READ_TIMEOUT=200ms
+DEVGATE_REDIS_WRITE_TIMEOUT=200ms
+DEVGATE_REDIS_KEY_PREFIX=prod:payments-gateway
+```
+
+Supply the password through the deployment's secret mechanism rather than a
+committed configuration file. The key prefix isolates deployments sharing one
+Redis database; each route uses `<prefix>:ratelimit:<route-name>`.
+
+Redis-backed buckets use an atomic Lua script and Redis server time, so
+concurrent replicas share one decision state without relying on synchronized
+application clocks. DevGate validates the Redis connection with `PING` during
+startup whenever at least one route selects Redis. Runtime Redis errors fail
+closed with `503 Service Unavailable`; an exhausted bucket returns `429 Too
+Many Requests`. Automatic Redis command retries are disabled because replaying
+the token-consumption script could debit a request twice.
+
+`devgate_rate_limiter_requests_total{route,outcome}` reports bounded outcomes:
+`allowed`, `rejected`, and `error`.
+
 ## Custom error responses
 
 DevGate can replace its default plain-text errors with custom bodies and
@@ -361,6 +411,7 @@ routes:
     upstream_url: http://users-service:8080
     max_request_body_bytes: 10485760
     rate_limit:
+      backend: local
       requests_per_second: 100
       burst: 200
     error_responses:

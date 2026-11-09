@@ -17,9 +17,11 @@ import (
 	"github.com/chyioishi/devgate/internal/gateway"
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
+	"github.com/chyioishi/devgate/internal/ratelimit"
 	"github.com/chyioishi/devgate/internal/requestid"
 	"github.com/chyioishi/devgate/internal/router"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -42,7 +44,7 @@ func main() {
 	logger.Info("server stopped")
 }
 
-func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr error) {
 	tlsConfig, err := loadServerTLSConfig(cfg.TLSCertFile, cfg.TLSKeyFile)
 	if err != nil {
 		return fmt.Errorf("configure server TLS: %w", err)
@@ -58,6 +60,33 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	routeRouter, err := router.New(routes)
 	if err != nil {
 		return fmt.Errorf("build routing table: %w", err)
+	}
+
+	var redisClient *redis.Client
+	if routesRequireRedis(routes) {
+		redisClient, err = newRedisClient(ctx, cfg.Redis)
+		if err != nil {
+			return fmt.Errorf("create Redis client: %w", err)
+		}
+		defer func() {
+			if err := redisClient.Close(); err != nil {
+				runErr = errors.Join(
+					runErr,
+					fmt.Errorf("close Redis client: %w", err),
+				)
+			}
+		}()
+	}
+	limiterFactory := func(
+		routeName string,
+		policy router.RateLimitPolicy,
+	) (ratelimit.Limiter, error) {
+		return newRateLimiter(
+			routeName,
+			policy,
+			redisClient,
+			cfg.Redis.KeyPrefix,
+		)
 	}
 
 	dnsResolver, err := discovery.NewDNSResolver(net.DefaultResolver)
@@ -103,6 +132,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		healthCheckClient,
 		cfg.UpstreamCircuitFailureThreshold,
 		cfg.UpstreamCircuitOpenTimeout,
+		limiterFactory,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
 		activeHealthCheckMetrics,

@@ -41,6 +41,7 @@ routes:
         headers:
           Content-Type: application/json
     rate_limit:
+      backend: local
       requests_per_second: 100
       burst: 200
     strip_path_prefix: true
