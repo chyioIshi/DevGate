@@ -47,6 +47,7 @@ type Config struct {
 	TrustedProxyCIDRs               []netip.Prefix `env:"DEVGATE_TRUSTED_PROXY_CIDRS" envSeparator:","`
 	ErrorResponses                  map[int]ErrorResponseConfig
 	Redis                           RedisConfig
+	APIKeys                         map[string]APIKeyCredentialConfig
 }
 
 // RedisConfig configures the shared Redis connection used by distributed
@@ -208,6 +209,7 @@ func Load() (Config, error) {
 
 	config.Routes = routesConfig.Routes
 	config.ErrorResponses = routesConfig.ErrorResponses
+	config.APIKeys = routesConfig.APIKeys
 
 	return config, nil
 }
