@@ -981,6 +981,48 @@ func TestPassiveHealthCheckPolicyFromConfig(t *testing.T) {
 	}
 }
 
+func TestAuthenticationPolicyFromConfig(t *testing.T) {
+	t.Parallel()
+
+	if got := authenticationPolicyFromConfig(nil); got != nil {
+		t.Errorf("authenticationPolicyFromConfig(nil) = %#v, want nil", got)
+	}
+
+	emptyConfig := &config.AuthenticationConfig{}
+	gotEmpty := authenticationPolicyFromConfig(emptyConfig)
+	if gotEmpty == nil {
+		t.Fatal("authenticationPolicyFromConfig() = nil, want policy")
+	}
+	if gotEmpty.APIKey != nil {
+		t.Errorf("authenticationPolicyFromConfig().APIKey = %#v, want nil", gotEmpty.APIKey)
+	}
+
+	cfg := &config.AuthenticationConfig{
+		APIKey: &config.APIKeyAuthenticationConfig{
+			Header:      "X-API-Key",
+			Credentials: []string{"internal-service", "partner-service"},
+		},
+	}
+	want := &router.AuthenticationPolicy{
+		APIKey: &router.APIKeyAuthenticationPolicy{
+			Header:      "X-API-Key",
+			Credentials: []string{"internal-service", "partner-service"},
+		},
+	}
+
+	got := authenticationPolicyFromConfig(cfg)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("authenticationPolicyFromConfig() = %+v, want %+v", got, want)
+	}
+	got.APIKey.Credentials[0] = "mutated"
+	if cfg.APIKey.Credentials[0] != "internal-service" {
+		t.Errorf(
+			"mutating mapped credentials changed config credential to %q",
+			cfg.APIKey.Credentials[0],
+		)
+	}
+}
+
 func TestUpstreamFromConfigMapsPassiveHealthCheck(t *testing.T) {
 	t.Parallel()
 
