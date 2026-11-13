@@ -1,12 +1,16 @@
 package config
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
 )
+
+// APIKeyDigest is the SHA-256 digest of an API-key secret retained at runtime.
+type APIKeyDigest [sha256.Size]byte
 
 func (c fileConfig) validateAuthentication() error {
 	for keyName, keyValue := range c.APIKeys {
@@ -104,4 +108,60 @@ func (c fileConfig) validateAuthentication() error {
 		}
 	}
 	return nil
+}
+
+func resolveAPIKeys(
+	definitions map[string]APIKeyCredentialConfig,
+	lookupEnv func(string) (string, bool),
+) (map[string]APIKeyDigest, error) {
+	if len(definitions) == 0 {
+		return nil, nil
+	}
+	apiKeyDigests := make(
+		map[string]APIKeyDigest,
+		len(definitions),
+	)
+	digestOwner := make(
+		map[APIKeyDigest]string,
+		len(definitions),
+	)
+	for credentialName, definition := range definitions {
+		definitionEnvValue, ok := lookupEnv(definition.ValueEnv)
+		if !ok {
+			return nil, fmt.Errorf(
+				"environment value of api key %q was not defined",
+				credentialName,
+			)
+		}
+		if strings.TrimSpace(definitionEnvValue) == "" {
+			return nil, fmt.Errorf(
+				"environment value of api key %q must not be empty",
+				credentialName,
+			)
+		}
+		if definitionEnvValue != strings.TrimSpace(definitionEnvValue) {
+			return nil, fmt.Errorf(
+				"environment value of api key %q must not have leading or trailing whitespace",
+				credentialName,
+			)
+		}
+		if !httpguts.ValidHeaderFieldValue(definitionEnvValue) {
+			return nil, fmt.Errorf(
+				"header value of api key %q must be valid",
+				credentialName,
+			)
+		}
+
+		digest := sha256.Sum256([]byte(definitionEnvValue))
+		if existingCredential, exists := digestOwner[digest]; exists {
+			return nil, fmt.Errorf(
+				"API key credentials %q and %q resolve to the same secret",
+				credentialName,
+				existingCredential,
+			)
+		}
+		digestOwner[digest] = credentialName
+		apiKeyDigests[credentialName] = digest
+	}
+	return apiKeyDigests, nil
 }
