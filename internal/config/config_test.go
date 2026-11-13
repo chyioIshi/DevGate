@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -238,6 +239,7 @@ routes:
 
 func TestLoadAPIKeyCredentials(t *testing.T) {
 	clearConfigEnv(t)
+	const apiKey = "internal-secret"
 	configPath := writeConfigFile(t, `
 api_keys:
   internal-service:
@@ -254,14 +256,15 @@ routes:
           - internal-service
 `)
 	t.Setenv(envConfigFile, configPath)
+	t.Setenv("DEVGATE_API_KEY_INTERNAL_SERVICE", apiKey)
 
 	got, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	wantAPIKeys := map[string]APIKeyCredentialConfig{
-		"internal-service": {ValueEnv: "DEVGATE_API_KEY_INTERNAL_SERVICE"},
+	wantAPIKeys := map[string]APIKeyDigest{
+		"internal-service": APIKeyDigest(sha256.Sum256([]byte(apiKey))),
 	}
 	if !reflect.DeepEqual(got.APIKeys, wantAPIKeys) {
 		t.Errorf("Config.APIKeys = %+v, want %+v", got.APIKeys, wantAPIKeys)
