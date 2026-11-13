@@ -48,6 +48,7 @@ type Route struct {
 	StripPathPrefix     bool
 	RequestTimeout      time.Duration
 	MaxRequestBodyBytes int64
+	Authentication      *AuthenticationPolicy
 }
 
 // HeaderTransformPolicy describes static header values to set and header names
@@ -195,6 +196,14 @@ func (r Route) validate() error {
 			)
 		}
 		seenHeaderMatches[normalized] = struct{}{}
+	}
+	if r.Authentication != nil {
+		if err := r.Authentication.validate(); err != nil {
+			return fmt.Errorf(
+				"authentication policy: %w",
+				err,
+			)
+		}
 	}
 	return nil
 }
