@@ -206,6 +206,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load route configuration: %w", err)
 	}
+	err = routesConfig.validateAuthentication()
+	if err != nil {
+		return Config{}, fmt.Errorf("validate route configuration: %w", err)
+	}
 
 	config.Routes = routesConfig.Routes
 	config.ErrorResponses = routesConfig.ErrorResponses
