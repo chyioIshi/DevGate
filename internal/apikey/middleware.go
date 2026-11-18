@@ -30,6 +30,12 @@ type ErrorResponder func(
 	int,
 )
 
+// Observer records API-key authentication outcomes.
+type Observer interface {
+	RecordAuthenticatedRequest()
+	RecordRejectedRequest()
+}
+
 // New creates middleware that authenticates one API key from header against
 // the configured credential digests. It removes the API-key header before
 // delegating an authenticated request to next.
@@ -38,6 +44,7 @@ func New(
 	header string,
 	credentials []Credential,
 	errorResponder ErrorResponder,
+	observer Observer,
 ) (http.Handler, error) {
 	if next == nil {
 		return nil, errors.New("next handler must not be nil")
@@ -95,7 +102,7 @@ func New(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestHeaderValues := r.Header.Values(header)
 		if len(requestHeaderValues) != 1 {
-			writeUnauthorized(w, r, errorResponder)
+			writeUnauthorized(w, r, observer, errorResponder)
 			return
 		}
 
@@ -115,8 +122,12 @@ func New(
 			)
 		}
 		if matched != 1 {
-			writeUnauthorized(w, r, errorResponder)
+			writeUnauthorized(w, r, observer, errorResponder)
 			return
+		}
+
+		if observer != nil {
+			observer.RecordAuthenticatedRequest()
 		}
 		matchedIdentity := identity.Identity{
 			Subject: credentials[matchedIndex].Name,
@@ -134,8 +145,12 @@ func New(
 func writeUnauthorized(
 	w http.ResponseWriter,
 	r *http.Request,
+	observer Observer,
 	errorResponder ErrorResponder,
 ) {
+	if observer != nil {
+		observer.RecordRejectedRequest()
+	}
 	w.Header().Set("WWW-Authenticate", "ApiKey")
 	if errorResponder != nil {
 		errorResponder(w, r, http.StatusUnauthorized)

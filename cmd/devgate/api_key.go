@@ -14,6 +14,7 @@ func newAPIKeyMiddleware(
 	policy router.APIKeyAuthenticationPolicy,
 	configuredDigests map[string]config.APIKeyDigest,
 	errorResponder apikey.ErrorResponder,
+	observer apikey.Observer,
 ) (http.Handler, error) {
 	credentials := make(
 		[]apikey.Credential,
@@ -40,6 +41,7 @@ func newAPIKeyMiddleware(
 		policy.Header,
 		credentials,
 		errorResponder,
+		observer,
 	)
 	if err != nil {
 		return nil, fmt.Errorf(

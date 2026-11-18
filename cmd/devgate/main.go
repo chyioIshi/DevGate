@@ -93,12 +93,14 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 		next http.Handler,
 		policy router.APIKeyAuthenticationPolicy,
 		responder apikey.ErrorResponder,
+		observer apikey.Observer,
 	) (http.Handler, error) {
 		return newAPIKeyMiddleware(
 			next,
 			policy,
 			cfg.APIKeys,
 			responder,
+			observer,
 		)
 	}
 
@@ -133,6 +135,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 	promRegistry := prometheus.NewRegistry()
 	circuitBreakerMetrics := metrics.NewCircuitBreaker(promRegistry)
 	rateLimiterMetrics := metrics.NewRateLimiter(promRegistry)
+	authenticationMetrics := metrics.NewAuthentication(promRegistry)
 	activeHealthCheckMetrics := metrics.NewActiveHealthCheck(promRegistry)
 	passiveHealthCheckMetrics := metrics.NewPassiveHealth(promRegistry)
 	dnsDiscoveryMetrics := metrics.NewDNSDiscovery(promRegistry)
@@ -149,6 +152,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 		apiKeyFactory,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
+		authenticationMetrics,
 		activeHealthCheckMetrics,
 		passiveHealthCheckMetrics,
 		dnsDiscoveryMetrics,

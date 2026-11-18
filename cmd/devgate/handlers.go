@@ -16,6 +16,7 @@ import (
 	"github.com/chyioishi/devgate/internal/directresponse"
 	"github.com/chyioishi/devgate/internal/discovery"
 	"github.com/chyioishi/devgate/internal/errorresponse"
+	"github.com/chyioishi/devgate/internal/identity"
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/ratelimit"
@@ -65,6 +66,7 @@ type apiKeyMiddlewareFactory func(
 	next http.Handler,
 	policy router.APIKeyAuthenticationPolicy,
 	errorResponder apikey.ErrorResponder,
+	observer apikey.Observer,
 ) (http.Handler, error)
 
 func routeRuntimeFromRoutes(
@@ -78,6 +80,7 @@ func routeRuntimeFromRoutes(
 	apiKeyFactory apiKeyMiddlewareFactory,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
+	authenticationMetrics *metrics.Authentication,
 	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
 	passiveHealthCheckMetrics *metrics.PassiveHealth,
 	dnsDiscoveryMetrics *metrics.DNSDiscovery,
@@ -449,10 +452,15 @@ func routeRuntimeFromRoutes(
 					route.Name,
 				)
 			}
+			authenticationRouteMetrics := authenticationMetrics.ForRoute(
+				route.Name,
+				identity.MethodAPIKey,
+			)
 			routeHandler, err = apiKeyFactory(
 				routeHandler,
 				*route.Authentication.APIKey,
 				routeErrorResponder.Write,
+				authenticationRouteMetrics,
 			)
 			if err != nil {
 				return nil, fmt.Errorf(
