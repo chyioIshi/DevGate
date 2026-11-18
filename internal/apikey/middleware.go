@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
+
+	"github.com/chyioishi/devgate/internal/identity"
 )
 
 // Digest is the SHA-256 digest of an API-key secret.
@@ -99,17 +101,31 @@ func New(
 
 		requestDigest := sha256.Sum256([]byte(requestHeaderValues[0]))
 		matched := 0
-		for _, credential := range credentials {
-			matched |= subtle.ConstantTimeCompare(
+		matchedIndex := 0
+		for i, credential := range credentials {
+			comparison := subtle.ConstantTimeCompare(
 				requestDigest[:],
 				credential.Digest[:],
+			)
+			matched = matched | comparison
+			matchedIndex = subtle.ConstantTimeSelect(
+				comparison,
+				i,
+				matchedIndex,
 			)
 		}
 		if matched != 1 {
 			writeUnauthorized(w, r, errorResponder)
 			return
 		}
-
+		matchedIdentity := identity.Identity{
+			Subject: credentials[matchedIndex].Name,
+			Method:  identity.MethodAPIKey,
+		}
+		r = r.WithContext(
+			identity.NewContext(r.Context(),
+				matchedIdentity),
+		)
 		r.Header.Del(header)
 		next.ServeHTTP(w, r)
 	}), nil
