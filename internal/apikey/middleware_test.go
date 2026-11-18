@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/chyioishi/devgate/internal/identity"
 )
 
 func TestNewValidatesConfiguration(t *testing.T) {
@@ -120,9 +122,29 @@ func TestMiddlewareAuthenticatesAnyConfiguredCredential(t *testing.T) {
 
 	for _, apiKey := range []string{"secret-a", "secret-b"} {
 		t.Run(apiKey, func(t *testing.T) {
+			wantSubject := "client-a"
+			if apiKey == "secret-b" {
+				wantSubject = "client-b"
+			}
 			nextCalls := 0
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				nextCalls++
+				gotIdentity, ok := identity.FromContext(r.Context())
+				if !ok {
+					t.Error("identity.FromContext() ok = false, want true")
+				} else {
+					wantIdentity := identity.Identity{
+						Subject: wantSubject,
+						Method:  identity.MethodAPIKey,
+					}
+					if gotIdentity != wantIdentity {
+						t.Errorf(
+							"identity.FromContext() = %+v, want %+v",
+							gotIdentity,
+							wantIdentity,
+						)
+					}
+				}
 				if got := r.Header.Get("X-Api-Key"); got != "" {
 					t.Errorf("downstream API key header = %q, want removed", got)
 				}
