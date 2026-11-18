@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400" fill="none">
+  <title>DevGate</title>
+  <desc>A slate stone gatehouse with twin crenellated towers, an open arch, and a teal passage accent.</desc>
+  <defs>
+    <linearGradient id="wall" x1="130" y1="130" x2="270" y2="330" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#CBD5DB"/>
+      <stop offset="1" stop-color="#8193A2"/>
+    </linearGradient>
+    <linearGradient id="tower" x1="0" y1="0" x2="96" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8597A5"/>
+      <stop offset=".3" stop-color="#DEE5E8"/>
+      <stop offset=".65" stop-color="#B5C2CB"/>
+      <stop offset="1" stop-color="#6B8193"/>
+    </linearGradient>
+    <linearGradient id="crown" x1="0" y1="60" x2="96" y2="124" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E4EAED"/>
+      <stop offset="1" stop-color="#8B9EAC"/>
+    </linearGradient>
+    <pattern id="masonry" width="64" height="48" patternUnits="userSpaceOnUse">
+      <path d="M0 0H64M0 24H64M0 48H64M32 0V24M0 24V48M64 24V48" stroke="#425B70" stroke-opacity=".42" stroke-width="2"/>
+      <path d="M2 3H30M35 3H62M3 27H61" stroke="#F4F7F8" stroke-opacity=".4" stroke-width="1.5"/>
+    </pattern>
+    <g id="turret" stroke="#304B60" stroke-linejoin="round">
+      <path d="M8 114Q48 130 88 114V330Q48 347 8 330Z" fill="url(#tower)" stroke-width="3"/>
+      <path d="M8 114Q48 130 88 114V330Q48 347 8 330Z" fill="url(#masonry)" stroke="none"/>
+      <path d="M10 164Q48 177 86 164M10 212Q48 225 86 212M10 260Q48 273 86 260M10 308Q48 321 86 308" stroke-opacity=".55" stroke-width="2"/>
+      <path d="M37 155Q48 151 59 155V185Q48 189 37 185Z" fill="#304B60" stroke-width="2"/>
+      <path d="M43 158V181" stroke="#182F43" stroke-width="6"/>
+      <path d="M3 107Q48 126 93 107V125Q48 144 3 125Z" fill="#8196A6" stroke-width="3"/>
+      <path d="M19 125V143L29 146V129M67 129V146L77 143V125" fill="#B9C7D0" stroke-width="2"/>
+      <path d="M0 108V81L18 77V60L35 57V75H60V57L78 60V77L96 81V108Q48 128 0 108Z" fill="url(#crown)" stroke-width="3"/>
+      <path d="M2 91Q48 108 94 91M18 78L35 75M60 75L78 78M24 98V116M72 98V116" stroke-opacity=".55" stroke-width="2"/>
+      <path d="M5 326Q48 342 91 326V341Q48 357 5 341Z" fill="#92A5B3" stroke-width="3"/>
+      <path d="M12 329Q48 340 84 329" stroke="#E0E7EB" stroke-opacity=".6" stroke-width="2"/>
+    </g>
+  </defs>
+
+  <!-- The arch is an open silhouette: its center remains transparent. -->
+  <path d="M130 126H270V339H237V240A37 37 0 0 0 163 240V339H130Z" fill="url(#wall)" stroke="#304B60" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M130 126H270V339H237V240A37 37 0 0 0 163 240V339H130Z" fill="url(#masonry)"/>
+  <path d="M132 128V109H149V127H169V109H188V127H212V109H231V127H251V109H268V145H132Z" fill="#C3CFD6" stroke="#304B60" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M133 146H267V160H133Z" fill="#7C92A3" stroke="#304B60" stroke-width="2"/>
+  <path d="M151 160V176H162V160M194 160V179H206V160M238 160V176H249V160" fill="#B8C6CF" stroke="#304B60" stroke-width="2"/>
+
+  <!-- Individual arch stones make the gateway readable at small sizes. -->
+  <path d="M151 338V240A49 49 0 0 1 249 240V338" stroke="#304B60" stroke-width="25"/>
+  <path d="M151 338V240A49 49 0 0 1 249 240V338" stroke="#C7D2D9" stroke-width="19"/>
+  <path d="M140 312H162M140 285H162M140 258H162M238 312H260M238 285H260M238 258H260M141 233L163 237M151 208L171 219M171 188L184 207M229 188L216 207M249 208L229 219M259 233L237 237" stroke="#425B70" stroke-width="2.5"/>
+  <path d="M189 184H211L208 211H192Z" fill="#E2E9ED" stroke="#304B60" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M170 316V241A30 30 0 0 1 230 241V316" stroke="#2AAFA5" stroke-opacity=".8" stroke-width="3" stroke-linecap="round"/>
+
+  <use href="#turret" transform="translate(45 0)"/>
+  <use href="#turret" transform="translate(259 0)"/>
+
+  <!-- A small routing motif, not a filled doorway. -->
+  <path d="M180 345H220M200 345V326" stroke="#2AAFA5" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="180" cy="345" r="4" fill="#40C5B7"/>
+  <circle cx="220" cy="345" r="4" fill="#40C5B7"/>
+  <circle cx="200" cy="326" r="4" fill="#40C5B7"/>
+</svg>

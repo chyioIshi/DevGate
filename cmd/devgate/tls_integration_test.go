@@ -62,7 +62,8 @@ func TestServePerformsTLSHandshakeWhenTLSIsConfigured(t *testing.T) {
 		MinVersion: tls.VersionTLS12,
 		RootCAs:    rootCAs,
 	}
-	t.Cleanup(transport.CloseIdleConnections)
+	// Close client connections before requestRunningServer's cleanup shuts down the server.
+	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
 
 	_, port, err := net.SplitHostPort(server.Addr)
