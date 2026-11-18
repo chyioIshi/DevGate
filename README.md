@@ -2,6 +2,49 @@
 
 DevGate is a production-oriented API gateway written in Go.
 
+## API key authentication
+
+DevGate can require an API key on individual routes. Define named caller
+credentials in the configuration file, while keeping their secret values in
+environment variables or secret mounts:
+
+```yaml
+api_keys:
+  billing-service:
+    value_env: DEVGATE_API_KEY_BILLING_SERVICE
+
+routes:
+  - name: protected-orders
+    protocol: http
+    path_prefix: /api/orders
+    upstream_url: http://orders-service:8080
+    authentication:
+      api_key:
+        header: X-API-Key
+        credentials:
+          - billing-service
+```
+
+```dotenv
+DEVGATE_API_KEY_BILLING_SERVICE=
+```
+
+`billing-service` identifies the caller that is allowed to send requests to
+the route; it does not identify the upstream service. Each referenced secret
+environment variable must use the `DEVGATE_` prefix and contain a non-empty
+HTTP header value. Secret values must not be committed to the repository.
+
+The request must contain exactly one configured API-key header value. Missing,
+repeated, or invalid values receive `401 Unauthorized` with
+`WWW-Authenticate: ApiKey`. After successful authentication, DevGate stores
+the credential name as the caller identity and removes the API-key header
+before invoking later middleware or forwarding the request upstream.
+
+Authentication exports
+`devgate_authentication_requests_total{route,method,outcome}`. The method is
+`api_key`, and the outcome is `authenticated` or `rejected`. Credential names
+and secret values are intentionally excluded from metric labels.
+
 ## TLS termination
 
 DevGate serves plaintext HTTP by default. Configure both PEM files to terminate

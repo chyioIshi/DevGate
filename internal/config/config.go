@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
 	"strings"
 	"time"
 
@@ -47,6 +48,7 @@ type Config struct {
 	TrustedProxyCIDRs               []netip.Prefix `env:"DEVGATE_TRUSTED_PROXY_CIDRS" envSeparator:","`
 	ErrorResponses                  map[int]ErrorResponseConfig
 	Redis                           RedisConfig
+	APIKeys                         map[string]APIKeyDigest
 }
 
 // RedisConfig configures the shared Redis connection used by distributed
@@ -205,9 +207,18 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("load route configuration: %w", err)
 	}
+	err = routesConfig.validateAuthentication()
+	if err != nil {
+		return Config{}, fmt.Errorf("validate route configuration: %w", err)
+	}
+	apiKeyDigests, err := resolveAPIKeys(routesConfig.APIKeys, os.LookupEnv)
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve API keys: %w", err)
+	}
 
 	config.Routes = routesConfig.Routes
 	config.ErrorResponses = routesConfig.ErrorResponses
+	config.APIKeys = apiKeyDigests
 
 	return config, nil
 }

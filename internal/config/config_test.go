@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -233,6 +234,53 @@ routes:
 	}
 	if !reflect.DeepEqual(got.ErrorResponses, want) {
 		t.Errorf("Config.ErrorResponses = %+v, want %+v", got.ErrorResponses, want)
+	}
+}
+
+func TestLoadAPIKeyCredentials(t *testing.T) {
+	clearConfigEnv(t)
+	const apiKey = "internal-secret"
+	configPath := writeConfigFile(t, `
+api_keys:
+  internal-service:
+    value_env: DEVGATE_API_KEY_INTERNAL_SERVICE
+routes:
+  - name: users
+    protocol: http
+    path_prefix: /api/users
+    upstream_url: http://users-service:8080
+    authentication:
+      api_key:
+        header: X-API-Key
+        credentials:
+          - internal-service
+`)
+	t.Setenv(envConfigFile, configPath)
+	t.Setenv("DEVGATE_API_KEY_INTERNAL_SERVICE", apiKey)
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	wantAPIKeys := map[string]APIKeyDigest{
+		"internal-service": APIKeyDigest(sha256.Sum256([]byte(apiKey))),
+	}
+	if !reflect.DeepEqual(got.APIKeys, wantAPIKeys) {
+		t.Errorf("Config.APIKeys = %+v, want %+v", got.APIKeys, wantAPIKeys)
+	}
+	wantAuthentication := &AuthenticationConfig{
+		APIKey: &APIKeyAuthenticationConfig{
+			Header:      "X-API-Key",
+			Credentials: []string{"internal-service"},
+		},
+	}
+	if !reflect.DeepEqual(got.Routes[0].Authentication, wantAuthentication) {
+		t.Errorf(
+			"Config.Routes[0].Authentication = %+v, want %+v",
+			got.Routes[0].Authentication,
+			wantAuthentication,
+		)
 	}
 }
 
@@ -857,6 +905,9 @@ func assertConfigEqual(t *testing.T, got, want Config) {
 			got.ErrorResponses,
 			want.ErrorResponses,
 		)
+	}
+	if !reflect.DeepEqual(got.APIKeys, want.APIKeys) {
+		t.Errorf("Config.APIKeys = %+v, want %+v", got.APIKeys, want.APIKeys)
 	}
 	if !slices.Equal(got.TrustedProxyCIDRs, want.TrustedProxyCIDRs) {
 		t.Errorf(

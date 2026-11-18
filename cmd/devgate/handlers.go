@@ -12,9 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/apikey"
 	"github.com/chyioishi/devgate/internal/directresponse"
 	"github.com/chyioishi/devgate/internal/discovery"
 	"github.com/chyioishi/devgate/internal/errorresponse"
+	"github.com/chyioishi/devgate/internal/identity"
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/proxy"
 	"github.com/chyioishi/devgate/internal/ratelimit"
@@ -60,6 +62,13 @@ type rateLimiterFactory func(
 	policy router.RateLimitPolicy,
 ) (ratelimit.Limiter, error)
 
+type apiKeyMiddlewareFactory func(
+	next http.Handler,
+	policy router.APIKeyAuthenticationPolicy,
+	errorResponder apikey.ErrorResponder,
+	observer apikey.Observer,
+) (http.Handler, error)
+
 func routeRuntimeFromRoutes(
 	routes []router.Route,
 	endpointResolver discovery.EndpointResolver,
@@ -68,8 +77,10 @@ func routeRuntimeFromRoutes(
 	circuitFailureThreshold int,
 	circuitOpenTimeout time.Duration,
 	limiterFactory rateLimiterFactory,
+	apiKeyFactory apiKeyMiddlewareFactory,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
+	authenticationMetrics *metrics.Authentication,
 	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
 	passiveHealthCheckMetrics *metrics.PassiveHealth,
 	dnsDiscoveryMetrics *metrics.DNSDiscovery,
@@ -427,6 +438,37 @@ func routeRuntimeFromRoutes(
 				limiter, limiterMetrics,
 				routeErrorResponder.Write,
 			)
+		}
+		if route.Authentication != nil {
+			if apiKeyFactory == nil {
+				return nil, fmt.Errorf(
+					"create API key middleware for route %q: API key middleware factory was not provided",
+					route.Name,
+				)
+			}
+			if route.Authentication.APIKey == nil {
+				return nil, fmt.Errorf(
+					"create API key middleware for route %q: API key authentication policy was not provided",
+					route.Name,
+				)
+			}
+			authenticationRouteMetrics := authenticationMetrics.ForRoute(
+				route.Name,
+				identity.MethodAPIKey,
+			)
+			routeHandler, err = apiKeyFactory(
+				routeHandler,
+				*route.Authentication.APIKey,
+				routeErrorResponder.Write,
+				authenticationRouteMetrics,
+			)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"create API key middleware for route %q: %w",
+					route.Name,
+					err,
+				)
+			}
 		}
 		runtime.handlers[route.Name] = routeHandler
 	}

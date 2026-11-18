@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/apikey"
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/discovery"
 	"github.com/chyioishi/devgate/internal/gateway"
@@ -88,6 +89,20 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 			cfg.Redis.KeyPrefix,
 		)
 	}
+	apiKeyFactory := func(
+		next http.Handler,
+		policy router.APIKeyAuthenticationPolicy,
+		responder apikey.ErrorResponder,
+		observer apikey.Observer,
+	) (http.Handler, error) {
+		return newAPIKeyMiddleware(
+			next,
+			policy,
+			cfg.APIKeys,
+			responder,
+			observer,
+		)
+	}
 
 	dnsResolver, err := discovery.NewDNSResolver(net.DefaultResolver)
 	if err != nil {
@@ -120,6 +135,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 	promRegistry := prometheus.NewRegistry()
 	circuitBreakerMetrics := metrics.NewCircuitBreaker(promRegistry)
 	rateLimiterMetrics := metrics.NewRateLimiter(promRegistry)
+	authenticationMetrics := metrics.NewAuthentication(promRegistry)
 	activeHealthCheckMetrics := metrics.NewActiveHealthCheck(promRegistry)
 	passiveHealthCheckMetrics := metrics.NewPassiveHealth(promRegistry)
 	dnsDiscoveryMetrics := metrics.NewDNSDiscovery(promRegistry)
@@ -133,8 +149,10 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 		cfg.UpstreamCircuitFailureThreshold,
 		cfg.UpstreamCircuitOpenTimeout,
 		limiterFactory,
+		apiKeyFactory,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
+		authenticationMetrics,
 		activeHealthCheckMetrics,
 		passiveHealthCheckMetrics,
 		dnsDiscoveryMetrics,

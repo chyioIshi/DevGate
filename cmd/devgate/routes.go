@@ -64,6 +64,7 @@ func routesFromConfig(routeConfigs []config.RouteConfig) ([]router.Route, error)
 			StripPathPrefix:     routeConfig.StripPathPrefix,
 			RequestTimeout:      routeConfig.RequestTimeout,
 			MaxRequestBodyBytes: routeConfig.MaxRequestBodyBytes,
+			Authentication:      authenticationPolicyFromConfig(routeConfig.Authentication),
 		}
 		routes = append(routes, route)
 	}
@@ -267,4 +268,20 @@ func rateLimitPolicyFromConfig(
 		RequestsPerSecond: cfg.RequestsPerSecond,
 		Burst:             cfg.Burst,
 	}, nil
+}
+
+func authenticationPolicyFromConfig(
+	authConfig *config.AuthenticationConfig,
+) *router.AuthenticationPolicy {
+	if authConfig == nil {
+		return nil
+	}
+	routeAuthPolicy := &router.AuthenticationPolicy{}
+	if authConfig.APIKey != nil {
+		routeAuthPolicy.APIKey = &router.APIKeyAuthenticationPolicy{}
+		credentialsClone := slices.Clone(authConfig.APIKey.Credentials)
+		routeAuthPolicy.APIKey.Header = authConfig.APIKey.Header
+		routeAuthPolicy.APIKey.Credentials = credentialsClone
+	}
+	return routeAuthPolicy
 }

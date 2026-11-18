@@ -45,6 +45,7 @@ type RouteConfig struct {
 	MaxRequestBodyBytes int64                       `yaml:"max_request_body_bytes"`
 	RequestHeaders      *HeaderTransformConfig      `yaml:"request_headers"`
 	ResponseHeaders     *HeaderTransformConfig      `yaml:"response_headers"`
+	Authentication      *AuthenticationConfig       `yaml:"authentication"`
 }
 
 // HeaderTransformConfig describes static header values to set and header names
@@ -141,7 +142,25 @@ type PassiveHealthCheckConfig struct {
 	EjectionDuration    time.Duration `yaml:"ejection_duration"`
 }
 
+// AuthenticationConfig selects the authentication policy applied to a route.
+type AuthenticationConfig struct {
+	APIKey *APIKeyAuthenticationConfig `yaml:"api_key"`
+}
+
+// APIKeyAuthenticationConfig configures API-key authentication for a route.
+type APIKeyAuthenticationConfig struct {
+	Header      string   `yaml:"header"`
+	Credentials []string `yaml:"credentials"`
+}
+
+// APIKeyCredentialConfig identifies the environment variable containing an
+// API-key secret.
+type APIKeyCredentialConfig struct {
+	ValueEnv string `yaml:"value_env"`
+}
+
 type fileConfig struct {
-	Routes         []RouteConfig               `yaml:"routes"`
-	ErrorResponses map[int]ErrorResponseConfig `yaml:"error_responses"`
+	APIKeys        map[string]APIKeyCredentialConfig `yaml:"api_keys"`
+	Routes         []RouteConfig                     `yaml:"routes"`
+	ErrorResponses map[int]ErrorResponseConfig       `yaml:"error_responses"`
 }

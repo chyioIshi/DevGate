@@ -10,6 +10,9 @@ import (
 
 func TestDecodeConfig(t *testing.T) {
 	input := `
+api_keys:
+  internal-service:
+    value_env: DEVGATE_API_KEY_INTERNAL_SERVICE
 error_responses:
   404:
     body: '{"error":"not found"}'
@@ -69,6 +72,11 @@ routes:
       backend: redis
       requests_per_second: 10.5
       burst: 20
+    authentication:
+      api_key:
+        header: X-API-Key
+        credentials:
+          - internal-service
   - name: fallback
     protocol: http
     path_prefix: /
@@ -141,6 +149,12 @@ routes:
 				RequestsPerSecond: 10.5,
 				Burst:             20,
 			},
+			Authentication: &AuthenticationConfig{
+				APIKey: &APIKeyAuthenticationConfig{
+					Header:      "X-API-Key",
+					Credentials: []string{"internal-service"},
+				},
+			},
 		},
 		{
 			Name:        "fallback",
@@ -182,6 +196,9 @@ routes:
 			Headers: map[string]string{"Content-Type": "application/json"},
 		},
 	}
+	wantAPIKeys := map[string]APIKeyCredentialConfig{
+		"internal-service": {ValueEnv: "DEVGATE_API_KEY_INTERNAL_SERVICE"},
+	}
 
 	got, err := decodeConfig(strings.NewReader(input))
 	if err != nil {
@@ -197,6 +214,57 @@ routes:
 			got.ErrorResponses,
 			wantErrorResponses,
 		)
+	}
+	if !reflect.DeepEqual(got.APIKeys, wantAPIKeys) {
+		t.Errorf("decodeConfig().APIKeys = %+v, want %+v", got.APIKeys, wantAPIKeys)
+	}
+}
+
+func TestDecodeConfigRejectsUnknownAuthenticationFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name: "authentication",
+			input: `
+routes:
+  - authentication:
+      bearer: {}
+`,
+		},
+		{
+			name: "API key policy",
+			input: `
+routes:
+  - authentication:
+      api_key:
+        query_parameter: api_key
+`,
+		},
+		{
+			name: "API key credential",
+			input: `
+api_keys:
+  internal-service:
+    value: secret
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := decodeConfig(strings.NewReader(tt.input))
+			if err == nil {
+				t.Fatal("decodeConfig() error = nil, want unknown field error")
+			}
+			if !reflect.DeepEqual(got, fileConfig{}) {
+				t.Errorf("decodeConfig() = %+v, want zero value", got)
+			}
+			if !strings.Contains(err.Error(), "unknown field") {
+				t.Errorf("decodeConfig() error = %q, want unknown field context", err)
+			}
+		})
 	}
 }
 
