@@ -1,0 +1,14 @@
+# Standalone local demo; no Redis or API-key credentials required.
+# Start the backend using the command in README.md.
+routes:
+  - name: demo
+    protocol: http
+    path_prefix: /api
+    upstream_url: http://127.0.0.1:9000
+    strip_path_prefix: true
+    request_timeout: 5s
+    max_request_body_bytes: 1048576
+    rate_limit:
+      backend: local
+      requests_per_second: 10
+      burst: 20
