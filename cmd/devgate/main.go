@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/apikey"
 	"github.com/chyioishi/devgate/internal/config"
 	"github.com/chyioishi/devgate/internal/discovery"
 	"github.com/chyioishi/devgate/internal/gateway"
@@ -88,6 +89,18 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 			cfg.Redis.KeyPrefix,
 		)
 	}
+	apiKeyFactory := func(
+		next http.Handler,
+		policy router.APIKeyAuthenticationPolicy,
+		responder apikey.ErrorResponder,
+	) (http.Handler, error) {
+		return newAPIKeyMiddleware(
+			next,
+			policy,
+			cfg.APIKeys,
+			responder,
+		)
+	}
 
 	dnsResolver, err := discovery.NewDNSResolver(net.DefaultResolver)
 	if err != nil {
@@ -133,6 +146,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (runErr er
 		cfg.UpstreamCircuitFailureThreshold,
 		cfg.UpstreamCircuitOpenTimeout,
 		limiterFactory,
+		apiKeyFactory,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
 		activeHealthCheckMetrics,

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chyioishi/devgate/internal/apikey"
 	"github.com/chyioishi/devgate/internal/directresponse"
 	"github.com/chyioishi/devgate/internal/discovery"
 	"github.com/chyioishi/devgate/internal/errorresponse"
@@ -60,6 +61,12 @@ type rateLimiterFactory func(
 	policy router.RateLimitPolicy,
 ) (ratelimit.Limiter, error)
 
+type apiKeyMiddlewareFactory func(
+	next http.Handler,
+	policy router.APIKeyAuthenticationPolicy,
+	errorResponder apikey.ErrorResponder,
+) (http.Handler, error)
+
 func routeRuntimeFromRoutes(
 	routes []router.Route,
 	endpointResolver discovery.EndpointResolver,
@@ -68,6 +75,7 @@ func routeRuntimeFromRoutes(
 	circuitFailureThreshold int,
 	circuitOpenTimeout time.Duration,
 	limiterFactory rateLimiterFactory,
+	apiKeyFactory apiKeyMiddlewareFactory,
 	circuitBreakerMetrics *metrics.CircuitBreaker,
 	rateLimiterMetrics *metrics.RateLimiter,
 	activeHealthCheckMetrics *metrics.ActiveHealthCheck,
@@ -427,6 +435,32 @@ func routeRuntimeFromRoutes(
 				limiter, limiterMetrics,
 				routeErrorResponder.Write,
 			)
+		}
+		if route.Authentication != nil {
+			if apiKeyFactory == nil {
+				return nil, fmt.Errorf(
+					"create API key middleware for route %q: API key middleware factory was not provided",
+					route.Name,
+				)
+			}
+			if route.Authentication.APIKey == nil {
+				return nil, fmt.Errorf(
+					"create API key middleware for route %q: API key authentication policy was not provided",
+					route.Name,
+				)
+			}
+			routeHandler, err = apiKeyFactory(
+				routeHandler,
+				*route.Authentication.APIKey,
+				routeErrorResponder.Write,
+			)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"create API key middleware for route %q: %w",
+					route.Name,
+					err,
+				)
+			}
 		}
 		runtime.handlers[route.Name] = routeHandler
 	}
