@@ -46,6 +46,7 @@ func TestActiveHealthCheckFailsClosedWhenAllEndpointsAreUnhealthy(t *testing.T) 
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		activeHealthCheckMetrics,

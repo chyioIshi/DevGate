@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/chyioishi/devgate/internal/apikey"
 	"github.com/chyioishi/devgate/internal/metrics"
 	"github.com/chyioishi/devgate/internal/ratelimit"
 	"github.com/chyioishi/devgate/internal/router"
@@ -44,6 +46,7 @@ func handlersFromRoutes(
 		circuitFailureThreshold,
 		circuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
 		newTestActiveHealthCheckMetrics(),
@@ -160,6 +163,7 @@ func TestRouteRuntimeDNSDiscoveryStartsFailClosed(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -228,6 +232,7 @@ func TestRouteRuntimeDNSDiscoveryPublishesResolvedEndpoints(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -331,6 +336,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -373,6 +379,7 @@ func TestRouteRuntimeFromRoutesCollectsPassiveHealthRunner(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -420,6 +427,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveAndPassiveHealthRunners(t *testing.
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -463,6 +471,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		newTestRateLimiterFactory(),
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -1497,6 +1506,7 @@ func TestRouteRuntimeAppliesRedisRateLimit(t *testing.T) {
 		testCircuitFailureThreshold,
 		testCircuitOpenTimeout,
 		limiterFactory,
+		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
 		newTestActiveHealthCheckMetrics(),
@@ -1529,6 +1539,140 @@ func TestRouteRuntimeAppliesRedisRateLimit(t *testing.T) {
 	}
 	if wantKey := "test:ratelimit:limited"; !server.Exists(wantKey) {
 		t.Errorf("Redis key %q does not exist", wantKey)
+	}
+}
+
+func TestRouteRuntimeAuthenticatesBeforeRateLimit(t *testing.T) {
+	limiter := &countingAllowedLimiter{}
+	limiterFactory := func(
+		string,
+		router.RateLimitPolicy,
+	) (ratelimit.Limiter, error) {
+		return limiter, nil
+	}
+	apiKeyFactory := func(
+		next http.Handler,
+		policy router.APIKeyAuthenticationPolicy,
+		errorResponder apikey.ErrorResponder,
+	) (http.Handler, error) {
+		return apikey.New(
+			next,
+			policy.Header,
+			[]apikey.Credential{
+				{
+					Name: "internal-service",
+					Digest: apikey.Digest(
+						sha256.Sum256([]byte("valid-secret")),
+					),
+				},
+			},
+			errorResponder,
+		)
+	}
+	route := router.Route{
+		Name:       "protected",
+		PathPrefix: "/protected",
+		DirectResponse: &router.DirectResponse{
+			StatusCode: http.StatusNoContent,
+		},
+		RateLimit: &router.RateLimitPolicy{
+			Backend:           router.RateLimitBackendLocal,
+			RequestsPerSecond: 1,
+			Burst:             1,
+		},
+		Authentication: &router.AuthenticationPolicy{
+			APIKey: &router.APIKeyAuthenticationPolicy{
+				Header:      "X-API-Key",
+				Credentials: []string{"internal-service"},
+			},
+		},
+	}
+	runtime, err := routeRuntimeForAuthenticationTest(
+		[]router.Route{route},
+		limiterFactory,
+		apiKeyFactory,
+	)
+	if err != nil {
+		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
+	}
+	handler := runtime.handlers[route.Name]
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(
+		unauthorized,
+		httptest.NewRequest(http.MethodGet, "/protected", nil),
+	)
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Errorf(
+			"unauthorized status = %d, want %d",
+			unauthorized.Code,
+			http.StatusUnauthorized,
+		)
+	}
+	if limiter.calls != 0 {
+		t.Errorf("rate limiter calls after unauthorized request = %d, want 0", limiter.calls)
+	}
+
+	authorizedRequest := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	authorizedRequest.Header.Set("X-Api-Key", "valid-secret")
+	authorized := httptest.NewRecorder()
+	handler.ServeHTTP(authorized, authorizedRequest)
+	if authorized.Code != http.StatusNoContent {
+		t.Errorf(
+			"authorized status = %d, want %d",
+			authorized.Code,
+			http.StatusNoContent,
+		)
+	}
+	if limiter.calls != 1 {
+		t.Errorf("rate limiter calls after authorized request = %d, want 1", limiter.calls)
+	}
+}
+
+func TestRouteRuntimeRequiresAPIKeyFactory(t *testing.T) {
+	route := testAuthenticatedDirectResponseRoute()
+
+	runtime, err := routeRuntimeForAuthenticationTest(
+		[]router.Route{route},
+		newTestRateLimiterFactory(),
+		nil,
+	)
+	if err == nil {
+		t.Fatal("routeRuntimeFromRoutes() error = nil, want missing factory error")
+	}
+	if runtime != nil {
+		t.Errorf("routeRuntimeFromRoutes() = %#v, want nil", runtime)
+	}
+	if !strings.Contains(err.Error(), "API key middleware factory was not provided") {
+		t.Errorf("routeRuntimeFromRoutes() error = %q, want factory context", err)
+	}
+}
+
+func TestRouteRuntimeRequiresAPIKeyPolicy(t *testing.T) {
+	route := testAuthenticatedDirectResponseRoute()
+	route.Authentication.APIKey = nil
+	apiKeyFactory := func(
+		http.Handler,
+		router.APIKeyAuthenticationPolicy,
+		apikey.ErrorResponder,
+	) (http.Handler, error) {
+		t.Fatal("API key factory called without an API key policy")
+		return nil, nil
+	}
+
+	runtime, err := routeRuntimeForAuthenticationTest(
+		[]router.Route{route},
+		newTestRateLimiterFactory(),
+		apiKeyFactory,
+	)
+	if err == nil {
+		t.Fatal("routeRuntimeFromRoutes() error = nil, want missing policy error")
+	}
+	if runtime != nil {
+		t.Errorf("routeRuntimeFromRoutes() = %#v, want nil", runtime)
+	}
+	if !strings.Contains(err.Error(), "API key authentication policy was not provided") {
+		t.Errorf("routeRuntimeFromRoutes() error = %q, want policy context", err)
 	}
 }
 
@@ -1878,4 +2022,52 @@ func newTestPassiveHealthMetrics() *metrics.PassiveHealth {
 
 func newTestDNSDiscoveryMetrics() *metrics.DNSDiscovery {
 	return metrics.NewDNSDiscovery(prometheus.NewRegistry())
+}
+
+type countingAllowedLimiter struct {
+	calls int
+}
+
+func (l *countingAllowedLimiter) Allow(context.Context) (bool, error) {
+	l.calls++
+	return true, nil
+}
+
+func routeRuntimeForAuthenticationTest(
+	routes []router.Route,
+	limiterFactory rateLimiterFactory,
+	apiKeyFactory apiKeyMiddlewareFactory,
+) (*routeRuntime, error) {
+	return routeRuntimeFromRoutes(
+		routes,
+		nil,
+		nil,
+		nil,
+		testCircuitFailureThreshold,
+		testCircuitOpenTimeout,
+		limiterFactory,
+		apiKeyFactory,
+		newTestCircuitBreakerMetrics(),
+		newTestRateLimiterMetrics(),
+		newTestActiveHealthCheckMetrics(),
+		newTestPassiveHealthMetrics(),
+		newTestDNSDiscoveryMetrics(),
+		nil,
+		discardLogger(),
+	)
+}
+
+func testAuthenticatedDirectResponseRoute() router.Route {
+	return router.Route{
+		Name: "protected",
+		DirectResponse: &router.DirectResponse{
+			StatusCode: http.StatusNoContent,
+		},
+		Authentication: &router.AuthenticationPolicy{
+			APIKey: &router.APIKeyAuthenticationPolicy{
+				Header:      "X-API-Key",
+				Credentials: []string{"internal-service"},
+			},
+		},
+	}
 }
