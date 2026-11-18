@@ -49,6 +49,7 @@ func handlersFromRoutes(
 		nil,
 		circuitBreakerMetrics,
 		rateLimiterMetrics,
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),
@@ -166,6 +167,7 @@ func TestRouteRuntimeDNSDiscoveryStartsFailClosed(t *testing.T) {
 		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),
@@ -235,6 +237,7 @@ func TestRouteRuntimeDNSDiscoveryPublishesResolvedEndpoints(t *testing.T) {
 		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		dnsDiscoveryMetrics,
@@ -339,6 +342,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveHealthCheckers(t *testing.T) {
 		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),
@@ -382,6 +386,7 @@ func TestRouteRuntimeFromRoutesCollectsPassiveHealthRunner(t *testing.T) {
 		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),
@@ -430,6 +435,7 @@ func TestRouteRuntimeFromRoutesCollectsActiveAndPassiveHealthRunners(t *testing.
 		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),
@@ -474,6 +480,7 @@ func TestRouteRuntimeFromRoutesRequiresClientForActiveHealthCheck(t *testing.T) 
 		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),
@@ -1509,6 +1516,7 @@ func TestRouteRuntimeAppliesRedisRateLimit(t *testing.T) {
 		nil,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		newTestAuthenticationMetrics(),
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),
@@ -1543,6 +1551,8 @@ func TestRouteRuntimeAppliesRedisRateLimit(t *testing.T) {
 }
 
 func TestRouteRuntimeAuthenticatesBeforeRateLimit(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	authenticationMetrics := metrics.NewAuthentication(registry)
 	limiter := &countingAllowedLimiter{}
 	limiterFactory := func(
 		string,
@@ -1554,6 +1564,7 @@ func TestRouteRuntimeAuthenticatesBeforeRateLimit(t *testing.T) {
 		next http.Handler,
 		policy router.APIKeyAuthenticationPolicy,
 		errorResponder apikey.ErrorResponder,
+		observer apikey.Observer,
 	) (http.Handler, error) {
 		return apikey.New(
 			next,
@@ -1567,6 +1578,7 @@ func TestRouteRuntimeAuthenticatesBeforeRateLimit(t *testing.T) {
 				},
 			},
 			errorResponder,
+			observer,
 		)
 	}
 	route := router.Route{
@@ -1591,6 +1603,7 @@ func TestRouteRuntimeAuthenticatesBeforeRateLimit(t *testing.T) {
 		[]router.Route{route},
 		limiterFactory,
 		apiKeyFactory,
+		authenticationMetrics,
 	)
 	if err != nil {
 		t.Fatalf("routeRuntimeFromRoutes() error = %v", err)
@@ -1627,6 +1640,20 @@ func TestRouteRuntimeAuthenticatesBeforeRateLimit(t *testing.T) {
 	if limiter.calls != 1 {
 		t.Errorf("rate limiter calls after authorized request = %d, want 1", limiter.calls)
 	}
+
+	const wantMetrics = `
+# HELP devgate_authentication_requests_total Total number of HTTP requests by authentication method and outcome.
+# TYPE devgate_authentication_requests_total counter
+devgate_authentication_requests_total{method="api_key",outcome="authenticated",route="protected"} 1
+devgate_authentication_requests_total{method="api_key",outcome="rejected",route="protected"} 1
+`
+	if err := testutil.GatherAndCompare(
+		registry,
+		strings.NewReader(wantMetrics),
+		"devgate_authentication_requests_total",
+	); err != nil {
+		t.Fatalf("authentication metrics mismatch: %v", err)
+	}
 }
 
 func TestRouteRuntimeRequiresAPIKeyFactory(t *testing.T) {
@@ -1636,6 +1663,7 @@ func TestRouteRuntimeRequiresAPIKeyFactory(t *testing.T) {
 		[]router.Route{route},
 		newTestRateLimiterFactory(),
 		nil,
+		newTestAuthenticationMetrics(),
 	)
 	if err == nil {
 		t.Fatal("routeRuntimeFromRoutes() error = nil, want missing factory error")
@@ -1655,6 +1683,7 @@ func TestRouteRuntimeRequiresAPIKeyPolicy(t *testing.T) {
 		http.Handler,
 		router.APIKeyAuthenticationPolicy,
 		apikey.ErrorResponder,
+		apikey.Observer,
 	) (http.Handler, error) {
 		t.Fatal("API key factory called without an API key policy")
 		return nil, nil
@@ -1664,6 +1693,7 @@ func TestRouteRuntimeRequiresAPIKeyPolicy(t *testing.T) {
 		[]router.Route{route},
 		newTestRateLimiterFactory(),
 		apiKeyFactory,
+		newTestAuthenticationMetrics(),
 	)
 	if err == nil {
 		t.Fatal("routeRuntimeFromRoutes() error = nil, want missing policy error")
@@ -2024,6 +2054,10 @@ func newTestDNSDiscoveryMetrics() *metrics.DNSDiscovery {
 	return metrics.NewDNSDiscovery(prometheus.NewRegistry())
 }
 
+func newTestAuthenticationMetrics() *metrics.Authentication {
+	return metrics.NewAuthentication(prometheus.NewRegistry())
+}
+
 type countingAllowedLimiter struct {
 	calls int
 }
@@ -2037,6 +2071,7 @@ func routeRuntimeForAuthenticationTest(
 	routes []router.Route,
 	limiterFactory rateLimiterFactory,
 	apiKeyFactory apiKeyMiddlewareFactory,
+	authenticationMetrics *metrics.Authentication,
 ) (*routeRuntime, error) {
 	return routeRuntimeFromRoutes(
 		routes,
@@ -2049,6 +2084,7 @@ func routeRuntimeForAuthenticationTest(
 		apiKeyFactory,
 		newTestCircuitBreakerMetrics(),
 		newTestRateLimiterMetrics(),
+		authenticationMetrics,
 		newTestActiveHealthCheckMetrics(),
 		newTestPassiveHealthMetrics(),
 		newTestDNSDiscoveryMetrics(),

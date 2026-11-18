@@ -25,7 +25,7 @@ func TestNewAPIKeyMiddlewareResolvesConfiguredCredentials(t *testing.T) {
 		nextCalls++
 		w.WriteHeader(http.StatusNoContent)
 	})
-	handler, err := newAPIKeyMiddleware(next, policy, configuredDigests, nil)
+	handler, err := newAPIKeyMiddleware(next, policy, configuredDigests, nil, nil)
 	if err != nil {
 		t.Fatalf("newAPIKeyMiddleware() error = %v", err)
 	}
@@ -54,6 +54,7 @@ func TestNewAPIKeyMiddlewareRejectsUnknownCredential(t *testing.T) {
 		policy,
 		map[string]config.APIKeyDigest{},
 		nil,
+		nil,
 	)
 	if err == nil {
 		t.Fatal("newAPIKeyMiddleware() error = nil, want missing credential error")
@@ -72,6 +73,7 @@ func TestNewAPIKeyMiddlewareWrapsMiddlewareConfigurationError(t *testing.T) {
 	got, err := newAPIKeyMiddleware(
 		http.NotFoundHandler(),
 		policy,
+		nil,
 		nil,
 		nil,
 	)

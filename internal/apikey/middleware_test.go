@@ -100,7 +100,7 @@ func TestNewValidatesConfiguration(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := New(tt.next, tt.header, tt.credentials, nil)
+			got, err := New(tt.next, tt.header, tt.credentials, nil, nil)
 			if err == nil {
 				t.Fatal("New() error = nil, want configuration error")
 			}
@@ -127,6 +127,7 @@ func TestMiddlewareAuthenticatesAnyConfiguredCredential(t *testing.T) {
 				wantSubject = "client-b"
 			}
 			nextCalls := 0
+			observer := &countingObserver{}
 			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				nextCalls++
 				gotIdentity, ok := identity.FromContext(r.Context())
@@ -150,7 +151,7 @@ func TestMiddlewareAuthenticatesAnyConfiguredCredential(t *testing.T) {
 				}
 				w.WriteHeader(http.StatusNoContent)
 			})
-			handler, err := New(next, "X-API-Key", credentials, nil)
+			handler, err := New(next, "X-API-Key", credentials, nil, observer)
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
 			}
@@ -165,6 +166,13 @@ func TestMiddlewareAuthenticatesAnyConfiguredCredential(t *testing.T) {
 			}
 			if nextCalls != 1 {
 				t.Errorf("next calls = %d, want 1", nextCalls)
+			}
+			if observer.authenticated != 1 || observer.rejected != 0 {
+				t.Errorf(
+					"observer counts = authenticated:%d rejected:%d, want authenticated:1 rejected:0",
+					observer.authenticated,
+					observer.rejected,
+				)
 			}
 		})
 	}
@@ -183,6 +191,7 @@ func TestMiddlewareRejectsMissingMultipleAndInvalidKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			nextCalls := 0
+			observer := &countingObserver{}
 			next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				nextCalls++
 			})
@@ -191,6 +200,7 @@ func TestMiddlewareRejectsMissingMultipleAndInvalidKeys(t *testing.T) {
 				"X-API-Key",
 				[]Credential{{Name: "client", Digest: digestForTest("secret")}},
 				nil,
+				observer,
 			)
 			if err != nil {
 				t.Fatalf("New() error = %v", err)
@@ -211,6 +221,13 @@ func TestMiddlewareRejectsMissingMultipleAndInvalidKeys(t *testing.T) {
 			}
 			if nextCalls != 0 {
 				t.Errorf("next calls = %d, want 0", nextCalls)
+			}
+			if observer.authenticated != 0 || observer.rejected != 1 {
+				t.Errorf(
+					"observer counts = authenticated:%d rejected:%d, want authenticated:0 rejected:1",
+					observer.authenticated,
+					observer.rejected,
+				)
 			}
 		})
 	}
@@ -236,6 +253,7 @@ func TestMiddlewareUsesCustomErrorResponder(t *testing.T) {
 		"X-API-Key",
 		[]Credential{{Name: "client", Digest: digestForTest("secret")}},
 		errorResponder,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -255,7 +273,7 @@ func TestMiddlewareOwnsCredentialSnapshot(t *testing.T) {
 	credentials := []Credential{
 		{Name: "client", Digest: digestForTest("original-secret")},
 	}
-	handler, err := New(http.NotFoundHandler(), "X-API-Key", credentials, nil)
+	handler, err := New(http.NotFoundHandler(), "X-API-Key", credentials, nil, nil)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -273,4 +291,17 @@ func TestMiddlewareOwnsCredentialSnapshot(t *testing.T) {
 
 func digestForTest(secret string) Digest {
 	return Digest(sha256.Sum256([]byte(secret)))
+}
+
+type countingObserver struct {
+	authenticated int
+	rejected      int
+}
+
+func (o *countingObserver) RecordAuthenticatedRequest() {
+	o.authenticated++
+}
+
+func (o *countingObserver) RecordRejectedRequest() {
+	o.rejected++
 }
